@@ -1,0 +1,3190 @@
+import os
+from datetime import datetime, date, timedelta
+from io import BytesIO
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
+from openpyxl.utils import get_column_letter
+import cv2
+import numpy as np
+from flask import Flask, jsonify, request, send_file
+from flask_cors import CORS
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import auth
+from attendance_session import (
+    get_session,
+    refresh_session,
+    start_session,
+    stop_session
+)
+from database import get_db_connection
+from face_verify import verify_face
+
+app = Flask(__name__)
+
+CORS(
+    app,
+    resources={
+        r"/*": {
+            "origins": "*"
+        }
+    },
+    allow_headers=[
+        "Content-Type",
+        "Authorization"
+    ]
+)
+SERVICE_ACCOUNT_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "serviceAccountKey.json"
+)
+try:
+    if not os.path.exists(SERVICE_ACCOUNT_PATH):
+        raise FileNotFoundError(
+            "serviceAccountKey.json not found in backend folder."
+        )
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(
+            SERVICE_ACCOUNT_PATH
+        )
+        firebase_admin.initialize_app(cred)
+    print("Firebase Admin SDK initialized successfully.")
+except Exception as e:
+    print(
+        "Firebase initialization failed:",
+        e
+    )
+def verify_firebase_token():
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        raise Exception("Authorization token missing.")
+    if not auth_header.startswith("Bearer "):
+        raise Exception("Invalid Authorization header.")
+    id_token = auth_header.split(
+        "Bearer ",
+        1
+    )[1]
+    decoded_token = auth.verify_id_token(id_token)
+    return decoded_token
+
+@app.route("/")
+def home():
+    return jsonify({
+        "success": True,
+        "message": "Proxy-Resistant Smart Attendance Backend Running"
+    })
+@app.route(
+    "/api/auth/login",
+    methods=["POST"]
+)
+def api_login():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                "success": False,
+                "message": "No login data received."
+            }), 400
+        email = str(
+            data.get("email", "")
+        ).strip().lower()
+        role = str(
+            data.get("role", "")
+        ).strip().lower()
+        if not email:
+            return jsonify({
+                "success": False,
+                "message": "Email is required."
+            }), 400
+        if role not in [
+            "student",
+            "teacher",
+            "admin"
+        ]:
+            return jsonify({
+                "success": False,
+                "message": "Invalid role."
+            }), 400
+        conn = get_db_connection()
+        cursor = conn.cursor(
+            dictionary=True
+        )
+        if role == "student":
+            cursor.execute(
+                """
+                SELECT
+                    prn,
+                    full_name,
+                    email,
+                    phone,
+                    year,
+                    branch,
+                    division,
+                    gender,
+                    face_folder
+                FROM students
+                WHERE LOWER(email) = %s
+                LIMIT 1
+                """,
+                (email,)
+            )
+            student = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            if not student:
+                return jsonify({
+                    "success": False,
+                    "message":
+                        "Student account exists in Firebase, "
+                        "but no student record was found in MySQL."
+                }), 404
+            return jsonify({
+                "success": True,
+                "role": "student",
+                "prn":
+                    student["prn"],
+                "student":
+                    student
+            }), 200
+        if role == "teacher":
+            cursor.execute(
+                """
+                SELECT
+                    teacher_id,
+                    full_name,
+                    email,
+                    phone,
+                    department,
+                    designation
+                FROM teachers
+                WHERE LOWER(email) = %s
+                LIMIT 1
+                """,
+                (email,)
+            )
+            teacher = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            if not teacher:
+                return jsonify({
+                    "success": False,
+                    "message":
+                        "Teacher account not found in MySQL."
+                }), 404
+            return jsonify({
+                "success": True,
+                "role": "teacher",
+                "teacher_id":
+                    teacher["teacher_id"],
+                "teacher":
+                    teacher
+            }), 200
+        if role == "admin":
+            cursor.execute(
+                """
+                SELECT
+                    admin_id,
+                    full_name,
+                    email
+                FROM admins
+                WHERE LOWER(email) = %s
+                LIMIT 1
+                """,
+                (email,)
+            )
+            admin = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            if not admin:
+                return jsonify({
+                    "success": False,
+                    "message":
+                        "Admin account not found in MySQL."
+                }), 404
+            return jsonify({
+                "success": True,
+                "role": "admin",
+                "admin_id":
+                    admin["admin_id"],
+                "admin":
+                    admin
+            }), 200
+    except Exception as e:
+        print(
+            "LOGIN ERROR:",
+            str(e)
+        )
+        return jsonify({
+            "success": False,
+            "message":
+                str(e)
+        }), 500
+    
+@app.route(
+    "/api/students",
+    methods=["GET"]
+)
+def get_students():
+    conn = None
+    cursor = None
+    try:
+        decoded_token = verify_firebase_token()
+        if not decoded_token:
+            return jsonify({
+                "success": False,
+                "message": "Invalid Firebase authentication."
+            }), 401
+        year = request.args.get(
+            "year",
+            ""
+        ).strip()
+        branch = request.args.get(
+            "branch",
+            ""
+        ).strip()
+        conn = get_db_connection()
+        cursor = conn.cursor(
+            dictionary=True
+        )
+        query = """
+            SELECT
+                prn,
+                full_name,
+                email,
+                phone,
+                year,
+                branch,
+                division,
+                gender,
+                face_folder
+            FROM students
+            WHERE 1 = 1
+        """
+        params = []
+        if year:
+            query += """
+                AND TRIM(year) = %s
+            """
+            params.append(year)
+        if branch:
+            query += """
+                AND TRIM(branch) = %s
+            """
+            params.append(branch)
+        query += """
+            ORDER BY full_name ASC
+        """
+        cursor.execute(
+            query,
+            tuple(params)
+        )
+        students = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        cursor = None
+        conn = None
+        return jsonify({
+            "success": True,
+            "students": students,
+            "count": len(students)
+        }), 200
+    except Exception as e:
+        print(
+            "GET STUDENTS ERROR:",
+            str(e)
+        )
+        try:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
+@app.route(
+    "/api/students",
+    methods=["POST"]
+)
+def add_student():
+    created_firebase_uid = None
+    conn = None
+    cursor = None
+    student_folder = None
+    image_path = None
+    try:
+        decoded_token = verify_firebase_token()
+        if not decoded_token:
+            return jsonify({
+                "success": False,
+                "message": "Invalid Firebase authentication."
+            }), 401
+        data = request.form
+        prn = str(
+            data.get("prn", "")
+        ).strip()
+        full_name = str(
+            data.get("full_name", "")
+        ).strip()
+        email = str(
+            data.get("email", "")
+        ).strip().lower()
+        password = str(
+            data.get("password", "")
+        )
+        phone = str(
+            data.get("phone", "")
+        ).strip()
+        year = str(
+            data.get("year", "")
+        ).strip()
+        branch = str(
+            data.get("branch", "")
+        ).strip()
+        division = str(
+            data.get("division", "")
+        ).strip()
+        gender = data.get("gender")
+        if gender:
+            gender = str(gender).strip()
+        else:
+            gender = None
+        if not prn:
+            return jsonify({
+                "success": False,
+                "message": "PRN is required."
+            }), 400
+        if not full_name:
+            return jsonify({
+                "success": False,
+                "message": "Full name is required."
+            }), 400
+        if not email:
+            return jsonify({
+                "success": False,
+                "message": "Email is required."
+            }), 400
+        if not password:
+            return jsonify({
+                "success": False,
+                "message": "Password is required."
+            }), 400
+        if len(password) < 6:
+            return jsonify({
+                "success": False,
+                "message":
+                    "Password must contain at least 6 characters."
+            }), 400
+        if not phone:
+            return jsonify({
+                "success": False,
+                "message": "Phone is required."
+            }), 400
+        if not year:
+            return jsonify({
+                "success": False,
+                "message": "Year is required."
+            }), 400
+        if not branch:
+            return jsonify({
+                "success": False,
+                "message": "Branch is required."
+            }), 400
+        if not division:
+            return jsonify({
+                "success": False,
+                "message": "Division is required."
+            }), 400
+        photo = request.files.get("photo")
+        if not photo:
+            return jsonify({
+                "success": False,
+                "message": "Student photo is required."
+            }), 400
+        original_filename = photo.filename
+        if not original_filename:
+            return jsonify({
+                "success": False,
+                "message": "Invalid photo filename."
+            }), 400
+        extension = os.path.splitext(
+            original_filename
+        )[1].lower()
+        allowed_extensions = {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp"
+        }
+        if extension not in allowed_extensions:
+            return jsonify({
+                "success": False,
+                "message":
+                    "Only JPG, JPEG, PNG and WEBP images are allowed."
+            }), 400
+        conn = get_db_connection()
+        cursor = conn.cursor(
+            dictionary=True
+        )
+        cursor.execute(
+            """
+            SELECT
+                id,
+                prn,
+                email
+            FROM students
+            WHERE prn = %s
+            LIMIT 1
+            """,
+            (prn,)
+        )
+        existing_student = cursor.fetchone()
+        if existing_student:
+            return jsonify({
+                "success": False,
+                "message":
+                    f"Student with PRN {prn} already exists."
+            }), 409
+        cursor.execute(
+            """
+            SELECT
+                id,
+                prn
+            FROM students
+            WHERE LOWER(email) = %s
+            LIMIT 1
+            """,
+            (email,)
+        )
+        existing_email = cursor.fetchone()
+        if existing_email:
+            return jsonify({
+                "success": False,
+                "message":
+                    f"Student with email {email} already exists."
+            }), 409
+        firebase_user = auth.create_user(
+            email=email,
+            password=password,
+            display_name=full_name
+        )
+        created_firebase_uid = firebase_user.uid
+        print(
+            "Firebase student authentication account created."
+        )
+        dataset_path = os.path.join(
+            os.path.dirname(__file__),
+            "dataset"
+        )
+        os.makedirs(
+            dataset_path,
+            exist_ok=True
+        )
+        student_folder = os.path.join(
+            dataset_path,
+            prn
+        )
+        os.makedirs(
+            student_folder,
+            exist_ok=True
+        )
+        image_filename = (
+            "image_1" + extension
+        )
+        image_path = os.path.join(
+            student_folder,
+            image_filename
+        )
+        photo.save(image_path)
+        print(
+            "Student face image saved:",
+            image_path
+        )
+        face_folder = prn
+        cursor.execute(
+            """
+            INSERT INTO students
+            (
+                prn,
+                full_name,
+                email,
+                phone,
+                year,
+                branch,
+                division,
+                gender,
+                face_folder
+            )
+            VALUES
+            (
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s
+            )
+            """,
+            (
+                prn,
+                full_name,
+                email,
+                phone,
+                year,
+                branch,
+                division,
+                gender,
+                face_folder
+            )
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        cursor = None
+        conn = None
+        return jsonify({
+            "success": True,
+            "message":
+                "Student added successfully.",
+            "student": {
+                "prn":
+                    prn,
+                "full_name":
+                    full_name,
+                "email":
+                    email,
+                "phone":
+                    phone,
+                "year":
+                    year,
+                "branch":
+                    branch,
+                "division":
+                    division,
+                "gender":
+                    gender,
+                "face_folder":
+                    face_folder
+            }
+        }), 201
+    except auth.EmailAlreadyExistsError:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+        return jsonify({
+            "success": False,
+            "message":
+                "A Firebase account already exists with this email."
+        }), 409
+    except Exception as e:
+        print(
+            "ADD STUDENT ERROR:",
+            str(e)
+        )
+        try:
+            if conn:
+                conn.rollback()
+        except Exception:
+            pass
+        if created_firebase_uid:
+            try:
+                auth.delete_user(
+                    created_firebase_uid
+                )
+                print(
+                    "Firebase student account rolled back."
+                )
+            except Exception as cleanup_error:
+                print(
+                    "Firebase cleanup error:",
+                    cleanup_error
+                )
+        try:
+            if image_path and os.path.exists(image_path):
+                os.remove(image_path)
+            if (
+                student_folder
+                and os.path.exists(student_folder)
+                and not os.listdir(student_folder)
+            ):
+                os.rmdir(student_folder)
+        except Exception as cleanup_error:
+            print(
+                "Photo cleanup error:",
+                cleanup_error
+            )
+        try:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+        return jsonify({
+            "success": False,
+            "message":
+                str(e)
+        }), 500
+@app.route(
+    "/student/profile/<prn>",
+    methods=["GET"]
+)
+def get_student_profile(prn):
+    try:
+        prn = str(prn).strip()
+        conn = get_db_connection()
+        cursor = conn.cursor(
+            dictionary=True
+        )
+        cursor.execute(
+            """
+            SELECT
+                full_name,
+                prn,
+                email,
+                phone,
+                year,
+                branch,
+                division,
+                gender,
+                face_folder
+            FROM students
+            WHERE prn = %s
+            LIMIT 1
+            """,
+            (prn,)
+        )
+        student = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if not student:
+            return jsonify({
+                "success": False,
+                "message":
+                    "Student not found."
+            }), 404
+        return jsonify(student), 200
+    except Exception as e:
+        print(
+            "STUDENT PROFILE ERROR:",
+            str(e)
+        )
+        return jsonify({
+            "success": False,
+            "message":
+                str(e)
+        }), 500
+    
+@app.route("/student/attendance/<prn>", methods=["GET"])
+def student_attendance(prn):
+    try:
+        prn = str(prn).strip()
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # Get student
+        cursor.execute("""
+            SELECT
+                prn,
+                full_name,
+                branch,
+                year
+            FROM students
+            WHERE prn = %s
+            LIMIT 1
+        """, (prn,))
+        student = cursor.fetchone()
+        if not student:
+            cursor.close()
+            conn.close()
+            return jsonify({
+                "success": False,
+                "message": "Student not found."
+            }), 404
+        branch = student["branch"]
+        year = student["year"]
+        cursor.execute("""
+            SELECT
+                session_id,
+                subject,
+                lecture_date,
+                start_time,
+                end_time
+            FROM attendance_sessions
+            WHERE department = %s
+              AND year = %s
+            ORDER BY lecture_date DESC, start_time DESC
+        """, (branch, year))
+        lectures = cursor.fetchall()
+        attendance_list = []
+        present = 0
+        absent = 0
+        for lecture in lectures:
+            cursor.execute("""
+                SELECT
+                    attendance_time,
+                    status
+                FROM attendance
+                WHERE session_id = %s
+                  AND prn = %s
+                LIMIT 1
+            """, (
+                lecture["session_id"],
+                prn
+            ))
+            record = cursor.fetchone()
+            if record:
+                status = "Present"
+                attendance_time = str(record["attendance_time"])
+                present += 1
+            else:
+                status = "Absent"
+                attendance_time = "-"
+                absent += 1
+            attendance_list.append({
+                "subject": lecture["subject"],
+                "date": str(lecture["lecture_date"]),
+                "start_time": str(lecture["start_time"]),
+                "end_time": (
+                    str(lecture["end_time"])
+                    if lecture["end_time"]
+                    else "-"
+                ),
+                "status": status,
+                "attendance_time": attendance_time
+            })
+        total = len(lectures)
+        percentage = 0
+        if total > 0:
+            percentage = round(
+                (present / total) * 100,
+                2
+            )
+        cursor.close()
+        conn.close()
+        return jsonify({
+            "success": True,
+            "summary": {
+                "total": total,
+                "present": present,
+                "absent": absent,
+                "percentage": percentage
+            },
+            "attendance": attendance_list
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+@app.route(
+    "/teacher/profile/<teacher_id>",
+    methods=["GET"]
+)
+def get_teacher_profile(teacher_id):
+    try:
+        teacher_id = str(
+            teacher_id
+        ).strip()
+        conn = get_db_connection()
+        cursor = conn.cursor(
+            dictionary=True
+        )
+        cursor.execute(
+            """
+            SELECT
+                teacher_id,
+                full_name,
+                email,
+                phone,
+                department,
+                designation
+            FROM teachers
+            WHERE teacher_id = %s
+            LIMIT 1
+            """,
+            (teacher_id,)
+        )
+        teacher = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if not teacher:
+            return jsonify({
+                "success": False,
+                "message":
+                    "Teacher not found."
+            }), 404
+        return jsonify(teacher), 200
+    except Exception as e:
+        print(
+            "TEACHER PROFILE ERROR:",
+            str(e)
+        )
+        return jsonify({
+            "success": False,
+            "message":
+                str(e)
+        }), 500
+@app.route(
+    "/attendance/start",
+    methods=["POST"]
+)
+def attendance_start():
+    data = request.json
+    session = start_session(
+        data["teacher_id"],
+        data["department"],
+        data["year"],
+        data["subject"],
+        data["lat"],
+        data["lng"]
+    )
+    return jsonify({
+        "success": True,
+        "session_id":
+            session["session_id"],
+        "qr_token":
+            session["qr_token"]
+    })
+@app.route(
+    "/attendance/verify",
+    methods=["POST"]
+)
+def attendance_verify():
+    session = get_session()
+    if session is None:
+        return jsonify({
+            "success": False,
+            "message":
+                "Attendance session not active"
+        })
+    data = request.json
+    if data["qr_token"] != session["qr_token"]:
+        return jsonify({
+            "success": False,
+            "message":
+                "QR Expired"
+        })
+    return jsonify({
+        "success": True,
+        "session_id":
+            session["session_id"]
+    })
+@app.route(
+    "/attendance/refresh",
+    methods=["POST"]
+)
+def attendance_refresh():
+    session = refresh_session()
+    if session is None:
+        return jsonify({
+            "success": False
+        })
+    return jsonify({
+        "success": True,
+        "session_id":
+            session["session_id"],
+        "qr_token":
+            session["qr_token"]
+    })
+@app.route(
+    "/attendance/stop",
+    methods=["POST"]
+)
+def attendance_stop():
+    stop_session()
+    return jsonify({
+        "success": True
+    })
+@app.route(
+    "/attendance/live/<session_id>",
+    methods=["GET"]
+)
+def live_attendance(session_id):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(
+            dictionary=True
+        )
+        cursor.execute(
+            """
+            SELECT
+                subject,
+                department,
+                year,
+                lecture_date,
+                start_time,
+                status
+            FROM attendance_sessions
+            WHERE session_id = %s
+            """,
+            (session_id,)
+        )
+        session = cursor.fetchone()
+        if not session:
+            cursor.close()
+            conn.close()
+            return jsonify({
+                "success": False,
+                "message":
+                    "Session not found"
+            }), 404
+        if session["lecture_date"]:
+            session["lecture_date"] = str(
+                session["lecture_date"]
+            )
+        if session["start_time"]:
+
+            session["start_time"] = str(
+                session["start_time"]
+            )
+        cursor.execute(
+            """
+            SELECT
+                prn,
+                student_name,
+                attendance_time,
+                status
+            FROM attendance
+            WHERE session_id = %s
+            ORDER BY attendance_time
+            """,
+            (session_id,)
+        )
+        students = cursor.fetchall()
+        for row in students:
+            if row["attendance_time"]:
+                row["attendance_time"] = str(
+                    row["attendance_time"]
+                )
+        cursor.close()
+        conn.close()
+        return jsonify({
+            "success": True,
+            "session": session,
+            "students": students,
+            "present_count":
+                len(students)
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message":
+                str(e)
+        }), 500
+@app.route(
+    "/attendance/session/<session_id>",
+    methods=["GET"]
+)
+def attendance_by_session(session_id):
+    conn = None
+    cursor = None
+    try:
+        session_id = str(session_id).strip()
+        print("============================================")
+        print("ATTENDANCE SESSION REQUEST")
+        print("Session ID:", session_id)
+        print("============================================")
+        conn = get_db_connection()
+        cursor = conn.cursor(
+            dictionary=True
+        )
+        cursor.execute(
+            """
+            SELECT
+                session_id,
+                teacher_id,
+                subject,
+                department,
+                year,
+                lecture_date,
+                start_time,
+                end_time,
+                status
+            FROM attendance_sessions
+            WHERE session_id = %s
+            LIMIT 1
+            """,
+            (session_id,)
+        )
+        session = cursor.fetchone()
+        if not session:
+            print(
+                "SESSION NOT FOUND:",
+                session_id
+            )
+            return jsonify({
+                "success": False,
+                "message":
+                    "Session not found."
+            }), 404
+        print("Session found:")
+        print(session)
+        department = str(
+            session["department"]
+        ).strip()
+        year = str(
+            session["year"]
+        ).strip()
+        cursor.execute(
+            """
+            SELECT
+                prn,
+                full_name
+            FROM students
+            WHERE TRIM(branch) = %s
+              AND TRIM(year) = %s
+            ORDER BY full_name ASC
+            """,
+            (
+                department,
+                year
+            )
+        )
+        all_students = cursor.fetchall()
+        print(
+            "Total class students:",
+            len(all_students)
+        )
+        cursor.execute(
+            """
+            SELECT
+                prn,
+                student_name,
+                attendance_time,
+                status
+            FROM attendance
+            WHERE session_id = %s
+            ORDER BY attendance_time ASC
+            """,
+            (session_id,)
+        )
+        attendance_records = cursor.fetchall()
+        print(
+            "Attendance records:",
+            len(attendance_records)
+        )
+        attendance_dict = {}
+        for record in attendance_records:
+            prn = str(
+                record["prn"]
+            ).strip()
+            if record["attendance_time"]:
+
+                record["attendance_time"] = str(
+                    record["attendance_time"]
+                )
+            attendance_dict[prn] = record
+        final_list = []
+        for student in all_students:
+            prn = str(
+                student["prn"]
+            ).strip()
+            if prn in attendance_dict:
+                record = attendance_dict[prn]
+                final_list.append({
+                    "prn":
+                        prn,
+                    "student_name":
+                        student["full_name"],
+                    "status":
+                        "Present",
+                    "attendance_time":
+                        record["attendance_time"]
+                        if record["attendance_time"]
+                        else "-"
+                })
+            else:
+                final_list.append({
+
+                    "prn":
+                        prn,
+
+                    "student_name":
+                        student["full_name"],
+
+                    "status":
+                        "Absent",
+
+                    "attendance_time":
+                        "-"
+
+                })
+
+        cursor.close()
+        conn.close()
+
+        cursor = None
+        conn = None
+
+        present_count = sum(
+            1
+            for student in final_list
+            if student["status"] == "Present"
+        )
+
+        absent_count = sum(
+            1
+            for student in final_list
+            if student["status"] == "Absent"
+        )
+
+        return jsonify({
+
+            "success": True,
+
+            "session": {
+
+                "session_id":
+                    session["session_id"],
+
+                "teacher_id":
+                    session["teacher_id"],
+
+                "subject":
+                    session["subject"],
+
+                "department":
+                    session["department"],
+
+                "year":
+                    session["year"],
+
+                "lecture_date":
+                    str(
+                        session["lecture_date"]
+                    )
+                    if session["lecture_date"]
+                    else "",
+
+                "start_time":
+                    str(
+                        session["start_time"]
+                    )
+                    if session["start_time"]
+                    else "",
+
+                "end_time":
+                    str(
+                        session["end_time"]
+                    )
+                    if session["end_time"]
+                    else "",
+
+                "status":
+                    session["status"]
+
+            },
+
+            "summary": {
+
+                "total":
+                    len(final_list),
+
+                "present":
+                    present_count,
+
+                "absent":
+                    absent_count
+
+            },
+
+            "students":
+                final_list
+
+        }), 200
+
+
+    except Exception as e:
+
+        print(
+            "ATTENDANCE BY SESSION ERROR:",
+            str(e)
+        )
+
+        try:
+
+            if cursor:
+                cursor.close()
+
+            if conn:
+                conn.close()
+
+        except Exception:
+            pass
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+                str(e)
+
+        }), 500
+
+@app.route(
+    "/teacher/attendance/mark-present",
+    methods=["POST"]
+)
+def teacher_mark_present():
+    conn = None
+    cursor = None
+
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                "success": False,
+                "message": "No attendance data received."
+            }), 400
+
+        teacher_id = str(
+            data.get("teacher_id", "")
+        ).strip()
+
+        session_id = str(
+            data.get("session_id", "")
+        ).strip()
+
+        prn = str(
+            data.get("prn", "")
+        ).strip()
+
+        if not teacher_id:
+            return jsonify({
+                "success": False,
+                "message": "Teacher ID is required."
+            }), 400
+
+        if not session_id:
+            return jsonify({
+                "success": False,
+                "message": "Session ID is required."
+            }), 400
+
+        if not prn:
+            return jsonify({
+                "success": False,
+                "message": "PRN is required."
+            }), 400
+
+        print("============================================")
+        print("FACULTY MANUAL ATTENDANCE CORRECTION")
+        print("Teacher ID:", teacher_id)
+        print("Session ID:", session_id)
+        print("PRN:", prn)
+        print("============================================")
+
+        conn = get_db_connection()
+
+        cursor = conn.cursor(
+            dictionary=True
+        )
+
+        # ----------------------------------------------------
+        # Get teacher
+        # ----------------------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                teacher_id,
+                full_name
+            FROM teachers
+            WHERE teacher_id = %s
+            LIMIT 1
+            """,
+            (teacher_id,)
+        )
+
+        teacher = cursor.fetchone()
+
+        if not teacher:
+            return jsonify({
+                "success": False,
+                "message": "Teacher not found."
+            }), 404
+
+        # ----------------------------------------------------
+        # Get session
+        # ----------------------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                session_id,
+                teacher_id,
+                subject,
+                department,
+                year,
+                lecture_date,
+                start_time,
+                end_time,
+                status
+            FROM attendance_sessions
+            WHERE session_id = %s
+            LIMIT 1
+            """,
+            (session_id,)
+        )
+
+        session = cursor.fetchone()
+
+        if not session:
+            return jsonify({
+                "success": False,
+                "message": "Attendance session not found."
+            }), 404
+
+        # ----------------------------------------------------
+        # IMPORTANT:
+        # Make sure this teacher owns this session.
+        #
+        # We also support old Firebase UID sessions.
+        # ----------------------------------------------------
+
+        allowed_teacher_ids = [
+            str(teacher_id).strip()
+        ]
+
+        try:
+            teacher_email = str(
+                teacher.get("email", "")
+            ).strip().lower()
+
+            if teacher_email:
+                firebase_user = auth.get_user_by_email(
+                    teacher_email
+                )
+
+                firebase_uid = firebase_user.uid
+
+                if firebase_uid not in allowed_teacher_ids:
+                    allowed_teacher_ids.append(
+                        firebase_uid
+                    )
+
+        except Exception as firebase_error:
+
+            print(
+                "Firebase teacher lookup skipped:",
+                firebase_error
+            )
+
+        session_teacher_id = str(
+            session["teacher_id"]
+        ).strip()
+
+        if session_teacher_id not in allowed_teacher_ids:
+            return jsonify({
+                "success": False,
+                "message":
+                    "You are not authorized to modify this attendance session."
+            }), 403
+
+        # ----------------------------------------------------
+        # Get student
+        # ----------------------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                prn,
+                full_name,
+                branch,
+                year
+            FROM students
+            WHERE prn = %s
+            LIMIT 1
+            """,
+            (prn,)
+        )
+
+        student = cursor.fetchone()
+
+        if not student:
+            return jsonify({
+                "success": False,
+                "message": "Student not found."
+            }), 404
+
+        # ----------------------------------------------------
+        # Verify student belongs to this session's class
+        # ----------------------------------------------------
+
+        if (
+            str(student["branch"]).strip()
+            != str(session["department"]).strip()
+        ):
+            return jsonify({
+                "success": False,
+                "message":
+                    "Student does not belong to this department."
+            }), 403
+
+        if (
+            str(student["year"]).strip()
+            != str(session["year"]).strip()
+        ):
+            return jsonify({
+                "success": False,
+                "message":
+                    "Student does not belong to this class."
+            }), 403
+
+        # ----------------------------------------------------
+        # Check existing attendance
+        # ----------------------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                attendance_id,
+                status,
+                attendance_time
+            FROM attendance
+            WHERE session_id = %s
+              AND TRIM(prn) = %s
+            LIMIT 1
+            """,
+            (
+                session_id,
+                prn
+            )
+        )
+
+        existing = cursor.fetchone()
+
+        # ----------------------------------------------------
+        # Already present
+        # ----------------------------------------------------
+
+        if existing:
+
+            if existing["status"] == "Present":
+                return jsonify({
+                    "success": True,
+                    "message":
+                        "Student is already marked Present.",
+                    "already_present": True,
+                    "prn": prn,
+                    "name": student["full_name"]
+                }), 200
+
+            # ------------------------------------------------
+            # If an Absent row exists, update it.
+            # ------------------------------------------------
+
+            cursor.execute(
+                """
+                UPDATE attendance
+                SET
+                    status = 'Present',
+                    attendance_time = NOW(),
+                    teacher_id = %s,
+                    teacher_name = %s
+                WHERE attendance_id = %s
+                """,
+                (
+                    session["teacher_id"],
+                    teacher["full_name"],
+                    existing["attendance_id"]
+                )
+            )
+
+        else:
+
+            # ------------------------------------------------
+            # Normal case:
+            # Absent means no attendance row exists.
+            #
+            # Create a Present record.
+            # ------------------------------------------------
+
+            cursor.execute(
+                """
+                INSERT INTO attendance
+                (
+                    session_id,
+                    teacher_id,
+                    student_name,
+                    teacher_name,
+                    prn,
+                    subject,
+                    department,
+                    year,
+                    attendance_date,
+                    attendance_time,
+                    status
+                )
+                VALUES
+                (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    NOW(),
+                    'Present'
+                )
+                """,
+                (
+                    session_id,
+                    session["teacher_id"],
+                    student["full_name"],
+                    teacher["full_name"],
+                    prn,
+                    session["subject"],
+                    session["department"],
+                    session["year"],
+                    session["lecture_date"]
+                )
+            )
+
+        conn.commit()
+
+        print("MANUAL ATTENDANCE UPDATED SUCCESSFULLY")
+        print("PRN:", prn)
+        print("Student:", student["full_name"])
+
+        return jsonify({
+            "success": True,
+            "message":
+                f"{student['full_name']} marked Present successfully.",
+            "already_present": False,
+            "prn": prn,
+            "name": student["full_name"],
+            "session_id": session_id
+        }), 200
+
+    except Exception as e:
+
+        print(
+            "MANUAL ATTENDANCE ERROR:",
+            str(e)
+        )
+
+        try:
+            if conn:
+                conn.rollback()
+        except Exception:
+            pass
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
+    finally:
+
+        try:
+            if cursor:
+                cursor.close()
+
+            if conn:
+                conn.close()
+
+        except Exception:
+            pass
+
+
+@app.route(
+    "/teacher/attendance",
+    methods=["GET"]
+)
+def teacher_attendance():
+
+    department = request.args.get(
+        "department"
+    )
+
+    year = request.args.get(
+        "year"
+    )
+
+    subject = request.args.get(
+        "subject"
+    )
+
+    date = request.args.get(
+        "date"
+    )
+
+
+    try:
+
+        conn = get_db_connection()
+
+        cursor = conn.cursor(
+            dictionary=True
+        )
+
+
+        cursor.execute(
+            """
+            SELECT
+                prn,
+                student_name,
+                attendance_time,
+                status
+            FROM attendance
+            WHERE department = %s
+              AND year = %s
+              AND subject = %s
+              AND attendance_date = %s
+            ORDER BY student_name
+            """,
+            (
+                department,
+                year,
+                subject,
+                date
+            )
+        )
+
+
+        students = cursor.fetchall()
+
+
+        for row in students:
+
+            if row["attendance_time"]:
+
+                row["attendance_time"] = str(
+                    row["attendance_time"]
+                )
+
+
+        cursor.close()
+        conn.close()
+
+
+        return jsonify({
+
+            "success": True,
+
+            "students":
+                students
+
+        })
+
+
+    except Exception as e:
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+                str(e)
+
+        }), 500
+
+@app.route(
+    "/teacher/sessions/<teacher_id>",
+    methods=["GET"]
+)
+def teacher_sessions(teacher_id):
+
+    conn = None
+    cursor = None
+
+    try:
+
+        teacher_id = str(
+            teacher_id
+        ).strip()
+
+        print("============================================")
+        print("TEACHER SESSIONS REQUEST")
+        print("Teacher ID:", teacher_id)
+        print("============================================")
+
+        conn = get_db_connection()
+
+        cursor = conn.cursor(
+            dictionary=True
+        )
+
+        cursor.execute(
+            """
+            SELECT
+                teacher_id,
+                full_name,
+                email,
+                department
+            FROM teachers
+            WHERE teacher_id = %s
+            LIMIT 1
+            """,
+            (teacher_id,)
+        )
+
+        teacher = cursor.fetchone()
+
+
+        if not teacher:
+
+            print(
+                "TEACHER NOT FOUND:",
+                teacher_id
+            )
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                    "Teacher not found."
+
+            }), 404
+
+
+        print("Teacher found:")
+        print(teacher)
+
+
+        teacher_email = str(
+            teacher["email"]
+        ).strip().lower()
+
+        firebase_uid = None
+
+        try:
+
+            firebase_user = auth.get_user_by_email(
+                teacher_email
+            )
+
+            firebase_uid = firebase_user.uid
+
+            print(
+                "Firebase UID:",
+                firebase_uid
+            )
+
+        except Exception as firebase_error:
+
+            print(
+                "Could not find Firebase user:",
+                firebase_error
+            )
+
+        if firebase_uid:
+
+            cursor.execute(
+                """
+                SELECT
+                    session_id,
+                    teacher_id,
+                    subject,
+                    lecture_date,
+                    start_time,
+                    end_time,
+                    department,
+                    year,
+                    status
+                FROM attendance_sessions
+                WHERE teacher_id = %s
+                   OR teacher_id = %s
+                ORDER BY
+                    lecture_date DESC,
+                    start_time DESC
+                """,
+                (
+                    teacher_id,
+                    firebase_uid
+                )
+            )
+
+        else:
+
+            cursor.execute(
+                """
+                SELECT
+                    session_id,
+                    teacher_id,
+                    subject,
+                    lecture_date,
+                    start_time,
+                    end_time,
+                    department,
+                    year,
+                    status
+                FROM attendance_sessions
+                WHERE teacher_id = %s
+                ORDER BY
+                    lecture_date DESC,
+                    start_time DESC
+                """,
+                (teacher_id,)
+            )
+
+
+        sessions = cursor.fetchall()
+
+
+        print(
+            "Total sessions found:",
+            len(sessions)
+        )
+
+        for session in sessions:
+
+            if session["lecture_date"]:
+
+                session["lecture_date"] = str(
+                    session["lecture_date"]
+                )
+
+
+            if session["start_time"]:
+
+                session["start_time"] = str(
+                    session["start_time"]
+                )
+
+
+            if session["end_time"]:
+
+                session["end_time"] = str(
+                    session["end_time"]
+                )
+
+        cursor.close()
+        conn.close()
+
+        cursor = None
+        conn = None
+
+
+        return jsonify({
+
+            "success": True,
+
+            "teacher_id":
+                teacher_id,
+
+            "sessions":
+                sessions
+
+        }), 200
+
+
+    except Exception as e:
+
+        print(
+            "TEACHER SESSIONS ERROR:",
+            str(e)
+        )
+
+
+        try:
+
+            if cursor:
+                cursor.close()
+
+            if conn:
+                conn.close()
+
+        except Exception:
+            pass
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+                str(e)
+
+        }), 500
+
+
+@app.route(
+    "/verify-face",
+    methods=["POST"]
+)
+def verify_face_api():
+
+    try:
+
+        prn = request.form.get("prn")
+        session_id = request.form.get("session_id")
+
+        if not prn:
+            return jsonify({
+                "success": False,
+                "verified": False,
+                "message": "PRN is required."
+            }), 400
+
+        if not session_id:
+            return jsonify({
+                "success": False,
+                "verified": False,
+                "message": "Session ID is required."
+            }), 400
+
+        if "image" not in request.files:
+            return jsonify({
+                "success": False,
+                "verified": False,
+                "message": "Face image is required."
+            }), 400
+
+        image_file = request.files["image"]
+
+        image_bytes = image_file.read()
+
+        image_array = np.frombuffer(
+            image_bytes,
+            np.uint8
+        )
+
+        image = cv2.imdecode(
+            image_array,
+            cv2.IMREAD_COLOR
+        )
+
+        if image is None:
+            return jsonify({
+                "success": False,
+                "verified": False,
+                "message": "Invalid image."
+            }), 400
+
+        result = verify_face(
+            image,
+            prn,
+            session_id
+        )
+
+        if not result.get("verified"):
+
+            return jsonify({
+                "success": False,
+                "verified": False,
+                "message": result.get(
+                    "message",
+                    "Face verification failed."
+                )
+            }), 401
+
+        return jsonify({
+
+            "success": True,
+
+            "verified": True,
+
+            "prn":
+                result.get("prn"),
+
+            "name":
+                result.get("name"),
+
+            "message":
+                "Face verified successfully."
+
+        }), 200
+
+    except Exception as e:
+
+        print(
+            "VERIFY FACE ERROR:",
+            str(e)
+        )
+
+        return jsonify({
+
+            "success": False,
+
+            "verified": False,
+
+            "message":
+                str(e)
+
+        }), 500
+
+@app.route(
+    "/attendance/mark",
+    methods=["POST"]
+)
+def attendance_mark():
+
+    conn = None
+    cursor = None
+
+    try:
+
+        data = request.get_json()
+
+        if not data:
+
+            return jsonify({
+                "success": False,
+                "message": "No attendance data received."
+            }), 400
+
+
+        prn = str(
+            data.get("prn", "")
+        ).strip()
+
+        session_id = str(
+            data.get("session_id", "")
+        ).strip()
+
+        if not prn:
+
+            return jsonify({
+                "success": False,
+                "message": "PRN is required."
+            }), 400
+
+        if not session_id:
+
+            return jsonify({
+                "success": False,
+                "message": "Session ID is required."
+            }), 400
+
+
+        print("============================================")
+        print("MARK ATTENDANCE")
+        print("PRN:", prn)
+        print("Session ID:", session_id)
+        print("============================================")
+
+        conn = get_db_connection()
+
+        cursor = conn.cursor(
+            dictionary=True
+        )
+        cursor.execute(
+            """
+            SELECT
+                prn,
+                full_name,
+                branch,
+                year
+            FROM students
+            WHERE prn = %s
+            LIMIT 1
+            """,
+            (prn,)
+        )
+
+        student = cursor.fetchone()
+
+
+        if not student:
+
+            return jsonify({
+                "success": False,
+                "message": "Student not found."
+            }), 404
+
+        cursor.execute(
+            """
+            SELECT
+                session_id,
+                teacher_id,
+                subject,
+                department,
+                year,
+                lecture_date,
+                status
+            FROM attendance_sessions
+            WHERE session_id = %s
+            LIMIT 1
+            """,
+            (session_id,)
+        )
+
+        session = cursor.fetchone()
+
+
+        if not session:
+
+            return jsonify({
+                "success": False,
+                "message": "Attendance session not found."
+            }), 404
+
+        if session["status"] != "ACTIVE":
+
+            return jsonify({
+                "success": False,
+                "message": "Attendance session is no longer active."
+            }), 400
+
+        if (
+            str(student["branch"]).strip()
+            != str(session["department"]).strip()
+        ):
+
+            return jsonify({
+                "success": False,
+                "message": "Student does not belong to this department."
+            }), 403
+
+
+        if (
+            str(student["year"]).strip()
+            != str(session["year"]).strip()
+        ):
+
+            return jsonify({
+                "success": False,
+                "message": "Student does not belong to this class."
+            }), 403
+
+        cursor.execute(
+            """
+            SELECT
+                prn
+            FROM attendance
+            WHERE session_id = %s
+              AND prn = %s
+            LIMIT 1
+            """,
+            (
+                session_id,
+                prn
+            )
+        )
+
+        existing = cursor.fetchone()
+
+
+        if existing:
+
+            return jsonify({
+
+                "success": True,
+
+                "message":
+                    "Attendance already marked.",
+
+                "already_marked": True,
+
+                "prn":
+                    prn,
+
+                "name":
+                    student["full_name"]
+
+            }), 200
+
+        cursor.execute(
+            """
+            INSERT INTO attendance
+            (
+                session_id,
+                teacher_id,
+                student_name,
+                teacher_name,
+                prn,
+                subject,
+                department,
+                year,
+                attendance_date,
+                attendance_time,
+                status
+            )
+            VALUES
+            (
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                NOW(),
+                'Present'
+            )
+            """,
+            (
+                session_id,
+                session["teacher_id"],
+                student["full_name"],
+                None,
+                prn,
+                session["subject"],
+                session["department"],
+                session["year"],
+                session["lecture_date"]
+            )
+        )
+
+
+        conn.commit()
+
+        print("ATTENDANCE MARKED SUCCESSFULLY")
+        print("PRN:", prn)
+        print("Name:", student["full_name"])
+
+
+        return jsonify({
+
+            "success": True,
+
+            "message":
+                "Attendance marked successfully.",
+
+            "already_marked":
+                False,
+
+            "prn":
+                prn,
+
+            "name":
+                student["full_name"],
+
+            "session_id":
+                session_id
+
+        }), 201
+
+
+    except Exception as e:
+
+        print(
+            "ATTENDANCE MARK ERROR:",
+            str(e)
+        )
+
+
+        try:
+
+            if conn:
+                conn.rollback()
+
+        except Exception:
+            pass
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+                str(e)
+
+        }), 500
+
+
+    finally:
+
+        try:
+
+            if cursor:
+                cursor.close()
+
+            if conn:
+                conn.close()
+
+        except Exception:
+            pass
+
+# ============================================================
+# MONTHLY ATTENDANCE EXCEL
+# ============================================================
+
+@app.route(
+    "/teacher/monthly-attendance/<teacher_id>/excel",
+    methods=["GET"]
+)
+def monthly_attendance_excel(teacher_id):
+
+    try:
+
+        month = request.args.get(
+            "month",
+            ""
+        ).strip()
+
+
+        if not month:
+
+            return jsonify({
+                "success": False,
+                "message": "Month is required. Example: 2026-09"
+            }), 400
+
+
+        teacher, report = get_monthly_attendance_data(
+            teacher_id,
+            month
+        )
+
+
+        # ----------------------------------------------------
+        # Create Excel workbook
+        # ----------------------------------------------------
+
+        workbook = Workbook()
+
+        worksheet = workbook.active
+
+        worksheet.title = "Monthly Attendance"
+
+
+        # ----------------------------------------------------
+        # Title
+        # ----------------------------------------------------
+
+        worksheet.merge_cells(
+            "A1:H1"
+        )
+
+        worksheet["A1"] = (
+            f"Monthly Attendance Report - {month}"
+        )
+
+        worksheet["A1"].font = Font(
+            bold=True,
+            size=16
+        )
+
+        worksheet["A1"].alignment = Alignment(
+            horizontal="center"
+        )
+
+
+        worksheet.merge_cells(
+            "A2:H2"
+        )
+
+        worksheet["A2"] = (
+            f"Teacher: {teacher['full_name']}"
+        )
+
+        worksheet["A2"].font = Font(
+            bold=True
+        )
+
+
+        # ----------------------------------------------------
+        # Headers
+        # ----------------------------------------------------
+
+        headers = [
+            "PRN",
+            "Student Name",
+            "Branch",
+            "Year",
+            "Total Lectures",
+            "Present",
+            "Absent",
+            "Attendance %"
+        ]
+
+
+        header_row = 4
+
+
+        for column, header in enumerate(
+            headers,
+            start=1
+        ):
+
+            cell = worksheet.cell(
+                row=header_row,
+                column=column
+            )
+
+            cell.value = header
+
+            cell.font = Font(
+                bold=True
+            )
+
+            cell.alignment = Alignment(
+                horizontal="center"
+            )
+
+
+        # ----------------------------------------------------
+        # Data
+        # ----------------------------------------------------
+
+        for row_index, student in enumerate(
+            report,
+            start=5
+        ):
+
+            worksheet.cell(
+                row=row_index,
+                column=1,
+                value=student["prn"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=2,
+                value=student["student_name"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=3,
+                value=student["branch"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=4,
+                value=student["year"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=5,
+                value=student["total_lectures"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=6,
+                value=student["present"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=7,
+                value=student["absent"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=8,
+                value=f"{student['percentage']}%"
+            )
+
+
+        # ----------------------------------------------------
+        # Auto column width
+        # ----------------------------------------------------
+
+        for column_cells in worksheet.columns:
+
+            max_length = 0
+
+            column_letter = get_column_letter(
+                column_cells[0].column
+            )
+
+
+            for cell in column_cells:
+
+                if cell.value is not None:
+
+                    max_length = max(
+                        max_length,
+                        len(str(cell.value))
+                    )
+
+
+            worksheet.column_dimensions[
+                column_letter
+            ].width = min(
+                max_length + 3,
+                35
+            )
+
+
+        # ----------------------------------------------------
+        # Freeze header
+        # ----------------------------------------------------
+
+        worksheet.freeze_panes = "A5"
+
+
+        # ----------------------------------------------------
+        # Create response
+        # ----------------------------------------------------
+
+        output = BytesIO()
+
+        workbook.save(output)
+
+        output.seek(0)
+
+
+        filename = (
+            f"Monthly_Attendance_{month}.xlsx"
+        )
+
+
+        from flask import send_file
+
+
+        return send_file(
+
+            output,
+
+            as_attachment=True,
+
+            download_name=filename,
+
+            mimetype=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            )
+        )
+
+
+    except Exception as e:
+
+        print(
+            "MONTHLY ATTENDANCE EXCEL ERROR:",
+            str(e)
+        )
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+                str(e)
+
+        }), 500
+
+# ============================================================
+# MONTHLY DEFAULTER EXCEL
+# ============================================================
+
+@app.route(
+    "/teacher/monthly-defaulters/<teacher_id>/excel",
+    methods=["GET"]
+)
+def monthly_defaulters_excel(teacher_id):
+
+    try:
+
+        month = request.args.get(
+            "month",
+            ""
+        ).strip()
+
+
+        if not month:
+
+            return jsonify({
+                "success": False,
+                "message": "Month is required. Example: 2026-09"
+            }), 400
+
+
+        teacher, report = get_monthly_attendance_data(
+            teacher_id,
+            month
+        )
+
+
+        # ----------------------------------------------------
+        # Only students below 75%
+        # ----------------------------------------------------
+
+        defaulters = [
+
+            student
+
+            for student in report
+
+            if student["percentage"] < 75
+
+        ]
+
+
+        # ----------------------------------------------------
+        # Create workbook
+        # ----------------------------------------------------
+
+        workbook = Workbook()
+
+        worksheet = workbook.active
+
+        worksheet.title = "Defaulter List"
+
+
+        # ----------------------------------------------------
+        # Title
+        # ----------------------------------------------------
+
+        worksheet.merge_cells(
+            "A1:H1"
+        )
+
+        worksheet["A1"] = (
+            f"Defaulter Attendance List - {month}"
+        )
+
+        worksheet["A1"].font = Font(
+            bold=True,
+            size=16
+        )
+
+        worksheet["A1"].alignment = Alignment(
+            horizontal="center"
+        )
+
+
+        worksheet.merge_cells(
+            "A2:H2"
+        )
+
+        worksheet["A2"] = (
+            f"Teacher: {teacher['full_name']} | "
+            f"Defaulter Threshold: Below 75%"
+        )
+
+        worksheet["A2"].font = Font(
+            bold=True
+        )
+
+
+        # ----------------------------------------------------
+        # Headers
+        # ----------------------------------------------------
+
+        headers = [
+            "PRN",
+            "Student Name",
+            "Branch",
+            "Year",
+            "Total Lectures",
+            "Present",
+            "Absent",
+            "Attendance %"
+        ]
+
+
+        for column, header in enumerate(
+            headers,
+            start=1
+        ):
+
+            cell = worksheet.cell(
+                row=4,
+                column=column
+            )
+
+            cell.value = header
+
+            cell.font = Font(
+                bold=True
+            )
+
+            cell.alignment = Alignment(
+                horizontal="center"
+            )
+
+
+        # ----------------------------------------------------
+        # Defaulter data
+        # ----------------------------------------------------
+
+        for row_index, student in enumerate(
+            defaulters,
+            start=5
+        ):
+
+            worksheet.cell(
+                row=row_index,
+                column=1,
+                value=student["prn"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=2,
+                value=student["student_name"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=3,
+                value=student["branch"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=4,
+                value=student["year"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=5,
+                value=student["total_lectures"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=6,
+                value=student["present"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=7,
+                value=student["absent"]
+            )
+
+            worksheet.cell(
+                row=row_index,
+                column=8,
+                value=f"{student['percentage']}%"
+            )
+
+
+        # ----------------------------------------------------
+        # If nobody is a defaulter
+        # ----------------------------------------------------
+
+        if len(defaulters) == 0:
+
+            worksheet.cell(
+                row=5,
+                column=1,
+                value="No defaulters found."
+            )
+
+
+        # ----------------------------------------------------
+        # Auto column width
+        # ----------------------------------------------------
+
+        for column_cells in worksheet.columns:
+
+            max_length = 0
+
+            column_letter = get_column_letter(
+                column_cells[0].column
+            )
+
+
+            for cell in column_cells:
+
+                if cell.value is not None:
+
+                    max_length = max(
+                        max_length,
+                        len(str(cell.value))
+                    )
+
+
+            worksheet.column_dimensions[
+                column_letter
+            ].width = min(
+                max_length + 3,
+                35
+            )
+
+
+        worksheet.freeze_panes = "A5"
+
+
+        # ----------------------------------------------------
+        # Send Excel
+        # ----------------------------------------------------
+
+        output = BytesIO()
+
+        workbook.save(output)
+
+        output.seek(0)
+
+
+        filename = (
+            f"Defaulter_Attendance_{month}.xlsx"
+        )
+
+
+        from flask import send_file
+
+
+        return send_file(
+
+            output,
+
+            as_attachment=True,
+
+            download_name=filename,
+
+            mimetype=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            )
+        )
+
+
+    except Exception as e:
+
+        print(
+            "DEFAULTER EXCEL ERROR:",
+            str(e)
+        )
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+                str(e)
+
+        }), 500
+    
+    
+# ============================================================
+# MONTHLY ATTENDANCE REPORT HELPER
+# ============================================================
+
+def get_monthly_attendance_data(teacher_id, month):
+    """
+    Get monthly attendance for all students taught by a teacher.
+
+    month format:
+        YYYY-MM
+
+    Example:
+        2026-09
+    """
+
+    conn = None
+    cursor = None
+
+    try:
+
+        # ----------------------------------------------------
+        # Validate month
+        # ----------------------------------------------------
+
+        try:
+            month_date = datetime.strptime(
+                month,
+                "%Y-%m"
+            ).date()
+
+        except ValueError:
+
+            raise ValueError(
+                "Invalid month format. Use YYYY-MM."
+            )
+
+
+        # First day of selected month
+        first_day = month_date.replace(day=1)
+
+
+        # First day of next month
+        if first_day.month == 12:
+
+            next_month = first_day.replace(
+                year=first_day.year + 1,
+                month=1
+            )
+
+        else:
+
+            next_month = first_day.replace(
+                month=first_day.month + 1
+            )
+
+
+        conn = get_db_connection()
+
+        cursor = conn.cursor(
+            dictionary=True
+        )
+
+
+        # ----------------------------------------------------
+        # Get teacher
+        # ----------------------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                teacher_id,
+                full_name,
+                email,
+                department
+            FROM teachers
+            WHERE teacher_id = %s
+            LIMIT 1
+            """,
+            (teacher_id,)
+        )
+
+        teacher = cursor.fetchone()
+
+
+        if not teacher:
+
+            raise ValueError(
+                "Teacher not found."
+            )
+
+
+        # ----------------------------------------------------
+        # Existing sessions may contain either:
+        #
+        # 1. teacher_id
+        # 2. old Firebase UID
+        #
+        # Support both.
+        # ----------------------------------------------------
+
+        teacher_ids = [
+            str(teacher_id).strip()
+        ]
+
+
+        try:
+
+            teacher_email = str(
+                teacher["email"]
+            ).strip().lower()
+
+
+            firebase_user = auth.get_user_by_email(
+                teacher_email
+            )
+
+
+            firebase_uid = firebase_user.uid
+
+
+            if firebase_uid not in teacher_ids:
+
+                teacher_ids.append(
+                    firebase_uid
+                )
+
+        except Exception as firebase_error:
+
+            print(
+                "Monthly report Firebase lookup skipped:",
+                firebase_error
+            )
+
+
+        # ----------------------------------------------------
+        # Build dynamic IN placeholders
+        # ----------------------------------------------------
+
+        placeholders = ",".join(
+            ["%s"] * len(teacher_ids)
+        )
+
+
+        # ----------------------------------------------------
+        # IMPORTANT:
+        #
+        # A student is counted only for sessions matching
+        # their branch + year.
+        #
+        # Missing attendance record = Absent.
+        # ----------------------------------------------------
+
+        query = f"""
+            SELECT
+
+                s.prn,
+
+                s.full_name,
+
+                s.branch,
+
+                s.year,
+
+                COUNT(
+                    DISTINCT ses.session_id
+                ) AS total_lectures,
+
+                COUNT(
+                    DISTINCT CASE
+                        WHEN a.prn IS NOT NULL
+                        THEN ses.session_id
+                    END
+                ) AS present
+
+            FROM students s
+
+            INNER JOIN attendance_sessions ses
+
+                ON TRIM(s.branch)
+                    = TRIM(ses.department)
+
+                AND TRIM(s.year)
+                    = TRIM(ses.year)
+
+
+            LEFT JOIN attendance a
+
+                ON a.session_id = ses.session_id
+
+                AND TRIM(a.prn)
+                    = TRIM(s.prn)
+
+
+            WHERE ses.teacher_id IN ({placeholders})
+
+                AND ses.lecture_date >= %s
+
+                AND ses.lecture_date < %s
+
+
+            GROUP BY
+
+                s.prn,
+                s.full_name,
+                s.branch,
+                s.year
+
+
+            HAVING total_lectures > 0
+
+
+            ORDER BY
+
+                s.branch ASC,
+                s.year ASC,
+                s.full_name ASC
+        """
+
+
+        params = (
+            teacher_ids
+            + [
+                first_day,
+                next_month
+            ]
+        )
+
+
+        cursor.execute(
+            query,
+            params
+        )
+
+
+        rows = cursor.fetchall()
+
+
+        # ----------------------------------------------------
+        # Calculate absent + percentage
+        # ----------------------------------------------------
+
+        report = []
+
+
+        for row in rows:
+
+            total = int(
+                row["total_lectures"] or 0
+            )
+
+            present = int(
+                row["present"] or 0
+            )
+
+            absent = total - present
+
+
+            percentage = 0
+
+
+            if total > 0:
+
+                percentage = round(
+                    (present / total) * 100,
+                    2
+                )
+
+
+            status = (
+                "Defaulter"
+                if percentage < 75
+                else "Regular"
+            )
+
+
+            report.append({
+
+                "prn":
+                    str(row["prn"]),
+
+                "student_name":
+                    row["full_name"],
+
+                "branch":
+                    row["branch"],
+
+                "year":
+                    row["year"],
+
+                "total_lectures":
+                    total,
+
+                "present":
+                    present,
+
+                "absent":
+                    absent,
+
+                "percentage":
+                    percentage,
+
+                "status":
+                    status
+            })
+
+
+        return teacher, report
+
+
+    finally:
+
+        try:
+
+            if cursor:
+                cursor.close()
+
+            if conn:
+                conn.close()
+
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=True
+    )
