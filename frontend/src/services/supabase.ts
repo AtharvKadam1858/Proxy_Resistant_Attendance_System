@@ -404,3 +404,69 @@ export async function addNewStudent(studentData: {
   });
   return { success: true, message: "Student added successfully to database." };
 }
+
+export async function registerStudent(studentData: {
+  prn: string;
+  full_name: string;
+  email: string;
+  phone?: string;
+  year: string;
+  branch: string;
+  division: string;
+  gender?: string;
+  password?: string;
+  avatar_url?: string;
+}) {
+  const cleanPrn = studentData.prn.trim();
+  const cleanEmail = studentData.email.trim().toLowerCase();
+
+  // Check if PRN or Email already exists
+  const existing = await supabaseQuery(
+    `students?or=(prn.eq.${encodeURIComponent(cleanPrn)},email.ilike.${encodeURIComponent(cleanEmail)})&limit=1`
+  );
+  if (existing && existing.length > 0) {
+    if (existing[0].prn === cleanPrn) {
+      throw new Error(`Student with PRN ${cleanPrn} is already registered.`);
+    }
+    throw new Error(`Student with email ${cleanEmail} is already registered.`);
+  }
+
+  const payload = {
+    prn: cleanPrn,
+    full_name: studentData.full_name.trim(),
+    email: cleanEmail,
+    phone: studentData.phone?.trim() || null,
+    year: studentData.year.trim(),
+    branch: studentData.branch.trim(),
+    division: studentData.division.trim(),
+    gender: studentData.gender || "Not Specified",
+    avatar_url: studentData.avatar_url || null,
+    face_folder: studentData.avatar_url || null,
+    password_hash: studentData.password || null,
+  };
+
+  const inserted = await supabaseQuery("students", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(payload),
+  });
+
+  return {
+    success: true,
+    message: "Registration successful! You can now log in.",
+    student: inserted && inserted.length > 0 ? inserted[0] : payload,
+  };
+}
+
+export async function updateStudentProfilePhoto(prn: string, avatarUrl: string) {
+  const cleanPrn = prn.trim();
+  await supabaseQuery(`students?prn=eq.${encodeURIComponent(cleanPrn)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      avatar_url: avatarUrl,
+      face_folder: avatarUrl,
+    }),
+  });
+  return { success: true };
+}

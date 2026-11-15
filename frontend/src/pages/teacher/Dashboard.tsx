@@ -335,6 +335,33 @@ export default function Dashboard() {
     setSessionId("SESSION_ENDED");
   };
 
+  const exportLiveAttendanceCSV = () => {
+    if (liveAttendance.length === 0) {
+      alert("No attendance records to export yet.");
+      return;
+    }
+    const headers = ["PRN", "Student Name", "Attendance Time", "Status"];
+    const rows = liveAttendance.map((s: any) => [
+      `"${s.prn || ""}"`,
+      `"${s.student_name || ""}"`,
+      `"${s.attendance_time || ""}"`,
+      `"${s.status || "Present"}"`,
+    ]);
+    const csvContent =
+      "data:text/csv;charset=utf-8," +
+      [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute(
+      "download",
+      `live_attendance_${selectedSubject || "session"}_${new Date().toISOString().split("T")[0]}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const toggleSession = () => {
     if (!attendanceActive) {
       startSession();
@@ -671,10 +698,29 @@ export default function Dashboard() {
                 Live Attendance
               </h3>
 
-              <strong>
-                Present :{" "}
-                {liveAttendance.length}
-              </strong>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <strong>
+                  Present : {liveAttendance.length}
+                </strong>
+                {liveAttendance.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={exportLiveAttendanceCSV}
+                    style={{
+                      padding: "5px 10px",
+                      fontSize: "12px",
+                      background: "#10b981",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "6px",
+                      cursor: "pointer",
+                      fontWeight: "600",
+                    }}
+                  >
+                    📥 Export CSV
+                  </button>
+                )}
+              </div>
             </div>
 
             <table

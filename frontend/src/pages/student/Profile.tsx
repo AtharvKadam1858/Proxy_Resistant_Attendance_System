@@ -10,7 +10,7 @@ import {
 import "../../styles/profile.css";
 
 import { API_URL } from "../../config";
-import { getStudentProfile } from "../../services/supabase";
+import { getStudentProfile, updateStudentProfilePhoto } from "../../services/supabase";
 import ritLogo from "../../assets/RIT_logo.jpeg";
 
 import {
@@ -33,6 +33,7 @@ interface Student {
   division: string;
   gender: string;
   face_folder: string;
+  avatar_url?: string;
 }
 
 const firebaseConfig = {
@@ -164,90 +165,86 @@ export default function Profile() {
   };
   const handleUploadPhoto = async () => {
     if (!photoFile) {
-      alert(
-        "Please select a photo first."
-      );
+      alert("Please select a photo first.");
       return;
     }
     if (!student) {
-      alert(
-        "Student profile not loaded."
-      );
+      alert("Student profile not loaded.");
       return;
     }
     try {
       setUploading(true);
-      const auth =
-        getAuth(firebaseApp);
-      const currentUser =
-        auth.currentUser;
-      if (!currentUser) {
-        alert(
-          "Student is not logged in. Please login again."
-        );
-        return;
-      }
-      const token =
-        await currentUser.getIdToken(true);
-      const formData =
-        new FormData();
-      formData.append(
-        "photo",
-        photoFile
-      );
-      formData.append(
-        "prn",
-        student.prn
-      );
-      const response =
-        await fetch(
-          `${API_URL}/student/profile/photo`,
-          {
+
+      // Convert file to high-efficiency base64 data URL
+      const base64Data: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement("canvas");
+            const maxDim = 400;
+            let width = img.width;
+            let height = img.height;
+            if (width > height) {
+              if (width > maxDim) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              }
+            } else {
+              if (height > maxDim) {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              resolve(canvas.toDataURL("image/jpeg", 0.85));
+            } else {
+              resolve(e.target?.result as string);
+            }
+          };
+          img.onerror = () => resolve(e.target?.result as string);
+          img.src = e.target?.result as string;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(photoFile);
+      });
+
+      // Update directly in Supabase cloud database
+      await updateStudentProfilePhoto(student.prn, base64Data);
+
+      // Try background update to Flask backend if available
+      try {
+        const currentUser = getAuth(firebaseApp).currentUser;
+        if (currentUser) {
+          const token = await currentUser.getIdToken(true);
+          const formData = new FormData();
+          formData.append("photo", photoFile);
+          formData.append("prn", student.prn);
+          await fetch(`${API_URL}/student/profile/photo`, {
             method: "POST",
-            headers: {
-              Authorization:
-                `Bearer ${token}`
-            },
-            body: formData
-          }
-        );
-      const data =
-        await response.json();
-      console.log(
-        "Photo upload response:",
-        data
-      );
-      if (!response.ok) {
-        throw new Error(
-          data.message ||
-          "Photo upload failed."
-        );
-      }
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+          });
+        }
+      } catch {}
+
+      setStudent({
+        ...student,
+        avatar_url: base64Data,
+        face_folder: base64Data,
+      });
       setPhotoError(false);
       setPhotoFile(null);
-      setPhotoPreview("");
-      const newPhotoUrl =
-        `${API_URL}/student/photo/${encodeURIComponent(student.prn)}?t=${Date.now()}`;
-      const imageElement =
-        document.querySelector(
-          ".profile-img"
-        ) as HTMLImageElement | null;
-      if (imageElement) {
-        imageElement.src =
-          newPhotoUrl;
-      }
-      alert(
-        "Profile photo updated successfully!"
-      );
+      setPhotoPreview(base64Data);
+
+      alert("✅ Profile photo updated successfully!");
     } catch (err: any) {
-      console.error(
-        "Photo upload error:",
-        err
-      );
-      alert(
-        err?.message ||
-        "Unable to upload profile photo."
-      );
+      console.error("Photo upload error:", err);
+      alert(err?.message || "Unable to upload profile photo.");
     } finally {
       setUploading(false);
     }
@@ -327,9 +324,13 @@ export default function Profile() {
             src={
               photoPreview
                 ? photoPreview
-                : !photoError
-                  ? `${API_URL}/student/photo/${encodeURIComponent(student.prn)}?t=${Date.now()}`
-                  : "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+                : student.avatar_url
+                  ? student.avatar_url
+                  : student.face_folder && (student.face_folder.startsWith("data:") || student.face_folder.startsWith("http"))
+                    ? student.face_folder
+                    : !photoError
+                      ? `${API_URL}/student/photo/${encodeURIComponent(student.prn)}?t=${Date.now()}`
+                      : "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
             }
             className="profile-img"
             alt={student.full_name}
