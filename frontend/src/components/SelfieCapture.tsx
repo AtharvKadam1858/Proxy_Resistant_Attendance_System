@@ -19,6 +19,7 @@ export default function SelfieCapture({
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const [loading, setLoading] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
 
   // ============================================================
   // START CAMERA
@@ -38,8 +39,8 @@ export default function SelfieCapture({
 
         if (mounted && videoRef.current) {
           videoRef.current.srcObject = stream;
-
           await videoRef.current.play();
+          setCameraReady(true);
         } else {
           stream.getTracks().forEach((track) => track.stop());
         }
@@ -471,23 +472,57 @@ export default function SelfieCapture({
     <div
       style={{
         textAlign: "center",
-        marginTop: "30px",
+        marginTop: "10px",
       }}
     >
-      <h2>
+      <h3 style={{ margin: "0 0 14px 0", color: "#111827", fontSize: "18px", fontWeight: "750" }}>
         Face Verification
-      </h2>
+      </h3>
+
+      {!cameraReady && (
+        <div
+          style={{
+            padding: "24px 16px",
+            background: "#fffbea",
+            border: "2px dashed #ffca08",
+            borderRadius: "12px",
+            maxWidth: "340px",
+            margin: "0 auto 16px auto",
+          }}
+        >
+          <div
+            style={{
+              width: "36px",
+              height: "36px",
+              border: "3px solid #eadfba",
+              borderTopColor: "#ffca08",
+              borderRadius: "50%",
+              animation: "spin 0.75s linear infinite",
+              margin: "0 auto 12px auto",
+            }}
+          />
+          <h4 style={{ margin: "0 0 4px 0", color: "#111", fontSize: "15px" }}>
+            ⏳ Starting camera, please wait...
+          </h4>
+          <p style={{ margin: 0, color: "#78350f", fontSize: "12px" }}>
+            Please hold still and face the screen.
+          </p>
+        </div>
+      )}
 
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
+        onLoadedData={() => setCameraReady(true)}
         width={350}
         style={{
-          borderRadius: "10px",
-          border: "2px solid #444",
-          maxWidth: "90vw",
+          borderRadius: "12px",
+          border: "2px solid #ffca08",
+          maxWidth: "100%",
+          display: cameraReady ? "inline-block" : "none",
+          boxShadow: "0 4px 14px rgba(0,0,0,0.1)",
         }}
       />
 
@@ -497,22 +532,27 @@ export default function SelfieCapture({
       {!autoCapture && (
         <button
           onClick={capture}
-          disabled={loading}
+          disabled={loading || !cameraReady}
+          style={{
+            background: "#ffca08",
+            border: "none",
+            borderRadius: "8px",
+            padding: "10px 20px",
+            fontWeight: "750",
+            cursor: "pointer",
+          }}
         >
-          {loading
-            ? "Verifying..."
-            : "Capture Selfie"}
+          {loading ? "Verifying Face..." : "Capture Selfie"}
         </button>
       )}
 
-      {autoCapture && (
-        <p>
-          {loading
-            ? "Verifying Face..."
-            : "Looking at camera..."}
+      {autoCapture && cameraReady && (
+        <p style={{ color: "#374151", fontSize: "14px", fontWeight: "600" }}>
+          {loading ? "⚡ Verifying Face with Cloud System..." : "👀 Looking for face..."}
           <br />
-
-          Please keep your face clearly visible.
+          <span style={{ fontSize: "12px", color: "#6b7280", fontWeight: "400" }}>
+            Please keep your face clearly visible within camera frame.
+          </span>
         </p>
       )}
 

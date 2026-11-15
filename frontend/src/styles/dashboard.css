@@ -1,87 +1,266 @@
-/* PAGE BACKGROUND */
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
-  background-color: #f4f6f9;
+  font-family: Arial, Helvetica, sans-serif;
+  background-color: #fffdf2;
+  color: #111111;
 }
-
-/* HEADER */
-header {
-  background-color: #1f4fbf;
-  color: white;
-  padding: 15px;
+.dashboard-header {
+  position: relative;
+  width: 100%;
+  min-height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #ffca08;
+  color: #111111;
+  padding: 16px 24px;
+  box-sizing: border-box;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
+}
+.dashboard-rit-logo {
+  position: absolute;
+  left: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 75px;
+  height: 75px;
+  object-fit: contain;
+  background-color: #ffffff;
+  border-radius: 8px;
+  padding: 4px;
+  box-sizing: border-box;
+}
+.dashboard-header h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.25;
   text-align: center;
-  font-size: 20px;
-  font-weight: bold;
+  padding-left: 90px;
+  padding-right: 20px;
 }
-
-/* MAIN CONTAINER */
 .container {
+  width: 100%;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 25px;
-  padding: 30px;
+  padding: 35px 25px 50px;
+  box-sizing: border-box;
   flex-wrap: nowrap;
 }
-
-/* CARD DESIGN */
 .card {
-  background: white;
-  padding: 20px;
   width: 420px;
   min-height: 420px;
-  border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  padding: 28px;
+  border: 1px solid #f0e2a5;
+  border-radius: 14px;
+  background-color: #ffffff;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.07);
+  box-sizing: border-box;
 }
-
-/* RIGHT CARD CENTER */
+.card h1,
+.card h2,
+.card h3 {
+  margin-top: 0;
+  color: #111111;
+}
 .center {
   text-align: center;
 }
-
-/* FORM ELEMENTS */
 label {
   display: block;
-  margin-top: 10px;
-  font-weight: bold;
+  margin-top: 14px;
+  margin-bottom: 7px;
+  color: #222222;
+  font-size: 14px;
+  font-weight: 700;
 }
-
 select {
   width: 100%;
-  padding: 8px;
-  margin-top: 5px;
-  border-radius: 5px;
-  border: 1px solid #ccc;
-}
-
-/* BUTTON */
-button {
-  margin-top: 15px;
-  width: 100%;
-  padding: 10px;
-  background-color: #1f4fbf;
-  color: white;
-  border: none;
-  border-radius: 5px;
+  height: 42px;
+  padding: 0 12px;
+  margin-top: 2px;
+  border: 1px solid #d6d6d6;
+  border-radius: 7px;
+  background-color: #ffffff;
+  color: #222222;
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
   cursor: pointer;
-  font-weight: bold;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
 }
-
+select:hover {
+  border-color: #c8a600;
+}
+select:focus {
+  border-color: #ffca08;
+  box-shadow:
+    0 0 0 3px rgba(255, 202, 8, 0.2);
+}
+select:disabled {
+  background-color: #f7f7f7;
+  color: #999999;
+  cursor: not-allowed;
+}
+button {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 16px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 7px;
+  background-color: #ffca08;
+  color: #111111;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    transform 0.12s ease,
+    box-shadow 0.18s ease;
+}
 button:hover {
-  background-color: #163c91;
+  background-color: #e8b600;
+  box-shadow:
+    0 4px 10px rgba(255, 202, 8, 0.3);
 }
-
-/* STATUS BOX */
+button:active {
+  transform: translateY(1px);
+}
+button:disabled {
+  background-color: #eadfae;
+  color: #777777;
+  cursor: not-allowed;
+  box-shadow: none;
+}
 .status-box {
-  background-color: #f1f1f1;
-  padding: 10px;
-  margin-top: 15px;
-  border-radius: 5px;
+  margin-top: 18px;
+  padding: 13px 15px;
+  border: 1px solid #eadfba;
+  border-radius: 8px;
+  background-color: #fffbea;
+  color: #444444;
+  font-size: 14px;
+  line-height: 1.5;
+  box-sizing: border-box;
 }
-
-/* QR IMAGE */
-img {
-  margin-top: 15px;
+.center > img {
+  display: block;
   width: 250px;
+  max-width: 100%;
+  height: auto;
+  margin: 20px auto 0;
+  border: 1px solid #eadfba;
+  border-radius: 10px;
+  background-color: #ffffff;
+  box-sizing: border-box;
+}
+.center table {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.center th {
+  padding: 10px 8px;
+  border-bottom: 2px solid #eadfba;
+  background-color: #fffbea;
+  color: #222222;
+  font-weight: 700;
+}
+.center td {
+  padding: 10px 8px;
+  border-bottom: 1px solid #eeeeee;
+  color: #333333;
+}
+.center tbody tr:hover {
+  background-color: #fffdf2;
+}
+.center > div[style] {
+  color: #222222;
+}
+.center td[colspan="3"] {
+  padding: 20px;
+  color: #777777;
+  text-align: center;
+}
+@media (max-width: 950px) {
+  .container {
+    flex-wrap: wrap;
+    align-items: stretch;
+    padding: 24px 16px 36px;
+  }
+  .card {
+    width: min(100%, 600px);
+  }
+}
+@media (max-width: 768px) {
+  .dashboard-header {
+    height: auto;
+    min-height: 75px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 14px;
+  }
+  .dashboard-rit-logo {
+    position: static;
+    transform: none;
+    margin: 0;
+    width: 55px;
+    height: 55px;
+    min-width: 55px;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+  .dashboard-header h1 {
+    font-size: 18px;
+    padding: 0;
+    text-align: left;
+    margin: 0;
+    line-height: 1.3;
+  }
+  .container {
+    gap: 16px;
+    padding: 16px 12px 30px;
+    flex-direction: column;
+  }
+  .card {
+    width: 100%;
+    min-height: auto;
+    padding: 20px 16px;
+    border-radius: 12px;
+  }
+  .center table {
+    font-size: 13px;
+  }
+  .center th,
+  .center td {
+    padding: 8px 6px;
+  }
+}
+@media (max-width: 480px) {
+  .dashboard-header {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+  .dashboard-rit-logo {
+    width: 46px;
+    height: 46px;
+    min-width: 46px;
+  }
+  .dashboard-header h1 {
+    font-size: 15px;
+  }
+  .center > img {
+    width: 200px;
+  }
 }
