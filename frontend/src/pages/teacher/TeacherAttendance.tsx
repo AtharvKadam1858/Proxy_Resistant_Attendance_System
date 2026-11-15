@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../../styles/attendance.css";
 import { API_URL } from "../../config";
+import {
+  getTeacherSessions,
+  getLiveAttendance,
+  markStudentPresent as markPresentSupabase,
+} from "../../services/supabase";
 
 interface Session {
   session_id: string;
@@ -18,6 +23,9 @@ interface Student {
   student_name: string;
   status: string;
   attendance_time: string;
+  leave_type?: string;
+  leave_comment?: string;
+  leave_verified?: boolean;
 }
 export default function TeacherAttendance() {
   const navigate = useNavigate();
@@ -29,7 +37,15 @@ export default function TeacherAttendance() {
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedSession, setSelectedSession] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
+  const [selectedReportSubject, setSelectedReportSubject] =
+  useState<string>("ALL");
+  const [selectedDefaulterThreshold, setSelectedDefaulterThreshold] =
+  useState<number>(75);
   const [downloading, setDownloading] = useState<boolean>(false);
+  const [leaveStudent, setLeaveStudent] = useState<Student | null>(null);
+  const [leaveType, setLeaveType] = useState<string>("Sick Leave");
+  const [leaveComment, setLeaveComment] = useState<string>("");
+  const [applyingLeave, setApplyingLeave] = useState<boolean>(false);
 
   useEffect(() => {
     loadSessions();
@@ -43,16 +59,26 @@ export default function TeacherAttendance() {
         setSessions([]);
         return;
       }
-      const res = await fetch(
-        `${API_URL}/teacher/sessions/${teacherId}`
-      );
-      const data = await res.json();
-      if (data.success && data.sessions.length > 0) {
-        setSessions(data.sessions);
-        const latestMonth =
-          data.sessions[0].lecture_date.substring(0, 7);
+      let sessionList: any[] = [];
+      try {
+        const res = await fetch(`${API_URL}/teacher/sessions/${teacherId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.sessions) {
+            sessionList = data.sessions;
+          }
+        }
+      } catch {}
+
+      if (sessionList.length === 0) {
+        sessionList = await getTeacherSessions(teacherId);
+      }
+
+      if (sessionList && sessionList.length > 0) {
+        setSessions(sessionList);
+        const latestMonth = sessionList[0].lecture_date.substring(0, 7);
         setSelectedMonth(latestMonth);
-        const firstSession = data.sessions[0];
+        const firstSession = sessionList[0];
         setSelectedSubject(firstSession.subject);
         setSelectedDate(firstSession.lecture_date);
         setSelectedSession(firstSession.session_id);
@@ -70,13 +96,22 @@ export default function TeacherAttendance() {
     if (!sessionId) return;
     setStudentsLoading(true);
     try {
-      const res = await fetch(`${API_URL}/attendance/session/${sessionId}`);
-      const data = await res.json();
-      if (data.success) {
-        setStudents(data.students);
-      } else {
-        setStudents([]);
+      let studentList: any[] = [];
+      try {
+        const res = await fetch(`${API_URL}/attendance/session/${sessionId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.students) {
+            studentList = data.students;
+          }
+        }
+      } catch {}
+
+      if (studentList.length === 0) {
+        const live = await getLiveAttendance(sessionId);
+        studentList = live.students || [];
       }
+      setStudents(studentList);
     } catch (err) {
       console.error("Failed to load students:", err);
       setStudents([]);
@@ -101,8 +136,81 @@ export default function TeacherAttendance() {
     return;
   }
   try {
+    let success = false;
+    try {
+      const response = await fetch(
+        `${API_URL}/teacher/attendance/mark-present`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            teacher_id: teacherId,
+            session_id: selectedSession,
+            prn: prn,
+          }),
+        }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        success = !!data.success;
+      }
+    } catch {}
+
+    if (!success) {
+      await markPresentSupabase(selectedSession, prn, teacherId);
+      success = true;
+    }
+
+    alert(`✅ ${studentName} has been marked Present.`);
+    await loadStudents(selectedSession);
+  } catch (error: any) {
+    console.error("Mark present error:", error);
+    alert(error?.message || "Failed to mark student present.");
+  }
+};
+
+const applyStudentLeave = async () => {
+  if (!leaveStudent) {
+    return;
+  }
+
+  if (!selectedSession) {
+    alert("Please select a lecture first.");
+    return;
+  }
+
+  if (!leaveType) {
+    alert("Please select a leave type.");
+    return;
+  }
+
+  if (!leaveComment.trim()) {
+    alert("Please enter a verification comment.");
+    return;
+  }
+
+  const teacherId = localStorage.getItem("teacher_id");
+
+  if (!teacherId) {
+    alert("Teacher ID not found. Please login again.");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Are you sure you want to approve ${leaveType} for ${leaveStudent.student_name}?`
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  setApplyingLeave(true);
+
+  try {
     const response = await fetch(
-      `${API_URL}/teacher/attendance/mark-present`,
+      `${API_URL}/teacher/attendance/apply-leave`,
       {
         method: "POST",
         headers: {
@@ -111,90 +219,154 @@ export default function TeacherAttendance() {
         body: JSON.stringify({
           teacher_id: teacherId,
           session_id: selectedSession,
-          prn: prn,
+          prn: leaveStudent.prn,
+          leave_type: leaveType,
+          leave_comment: leaveComment.trim(),
         }),
       }
     );
+
     const data = await response.json();
+
     if (!response.ok || !data.success) {
       throw new Error(
-        data.message || "Failed to update attendance."
+        data.message || "Failed to apply leave."
       );
     }
+
     alert(
-      `✅ ${studentName} has been marked Present.`
+      `✅ ${leaveStudent.student_name} has been marked on ${leaveType}.`
     );
+
+    setLeaveStudent(null);
+    setLeaveType("Sick Leave");
+    setLeaveComment("");
+
     await loadStudents(selectedSession);
+
   } catch (error) {
-    console.error(
-      "Mark present error:",
-      error
-    );
+    console.error("Apply leave error:", error);
+
     alert(
       error instanceof Error
         ? error.message
-        : "Failed to update attendance."
+        : "Failed to apply student leave."
     );
+  } finally {
+    setApplyingLeave(false);
   }
 };
+
   const downloadExcel = async (
-    type: "attendance" | "defaulters"
-  ) => {
-    const teacherId = localStorage.getItem("teacher_id");
-    if (!teacherId) {
-      alert("Teacher ID not found.");
-      return;
-    }
-    if (!selectedMonth) {
-      alert("Please select a month.");
-      return;
-    }
-    setDownloading(true);
-    try {
-      const endpoint =
-        type === "attendance"
-          ? `/teacher/monthly-attendance/${teacherId}/excel`
-          : `/teacher/monthly-defaulters/${teacherId}/excel`;
-      const response = await fetch(
-        `${API_URL}${endpoint}?month=${selectedMonth}`
+  type: "attendance" | "defaulters"
+) => {
+  const teacherId = localStorage.getItem("teacher_id");
+
+  if (!teacherId) {
+    alert("Teacher ID not found.");
+    return;
+  }
+
+  if (!selectedMonth) {
+    alert("Please select a month.");
+    return;
+  }
+
+  if (!selectedReportSubject) {
+    alert("Please select a subject.");
+    return;
+  }
+
+  if (
+    type === "defaulters" &&
+    (!selectedDefaulterThreshold ||
+      selectedDefaulterThreshold <= 0 ||
+      selectedDefaulterThreshold > 100)
+  ) {
+    alert("Please select a valid defaulter threshold.");
+    return;
+  }
+
+  setDownloading(true);
+
+  try {
+    const endpoint =
+      type === "attendance"
+        ? `/teacher/monthly-attendance/${teacherId}/excel`
+        : `/teacher/monthly-defaulters/${teacherId}/excel`;
+
+    const params = new URLSearchParams();
+
+    params.append("month", selectedMonth);
+    params.append("subject", selectedReportSubject);
+
+    // Send threshold only for defaulter report
+    if (type === "defaulters") {
+      params.append(
+        "threshold",
+        selectedDefaulterThreshold.toString()
       );
-      if (!response.ok) {
-        let message = "Failed to download Excel.";
-        try {
-          const data = await response.json();
-          if (data.message) {
-            message = data.message;
-          }
-        } catch {
+    }
+
+    const response = await fetch(
+      `${API_URL}${endpoint}?${params.toString()}`
+    );
+
+    if (!response.ok) {
+      let message = "Failed to download Excel.";
+
+      try {
+        const data = await response.json();
+
+        if (data.message) {
+          message = data.message;
         }
-        throw new Error(message);
+      } catch {
+        // Ignore JSON parsing error
       }
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download =
-        type === "attendance"
-          ? `Monthly_Attendance_${selectedMonth}.xlsx`
-          : `Defaulter_Attendance_${selectedMonth}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error(
-        "Excel download error:",
-        error
-      );
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to download Excel."
-      );
-    } finally {
-      setDownloading(false);
+
+      throw new Error(message);
     }
-  };
+
+    const blob = await response.blob();
+
+    const url = window.URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+
+    link.href = url;
+
+    const subjectName =
+      selectedReportSubject === "ALL"
+        ? "All_Subjects"
+        : selectedReportSubject.replace(/\s+/g, "_");
+
+    link.download =
+      type === "attendance"
+        ? `Monthly_Attendance_${subjectName}_${selectedMonth}.xlsx`
+        : `Defaulter_Attendance_Below_${selectedDefaulterThreshold}Percent_${subjectName}_${selectedMonth}.xlsx`;
+
+    document.body.appendChild(link);
+
+    link.click();
+
+    link.remove();
+
+    window.URL.revokeObjectURL(url);
+
+  } catch (error) {
+    console.error("Excel download error:", error);
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Failed to download Excel."
+    );
+
+  } finally {
+    setDownloading(false);
+  }
+};
   const subjects = useMemo(() => {
     return [...new Set(sessions.map((s) => s.subject))];
   }, [sessions]);
@@ -312,35 +484,87 @@ export default function TeacherAttendance() {
             </div>
           </div>
           <div className="monthly-report-controls">
+
+            {/* REPORT SUBJECT */}
+
             <div className="month-selector">
+
+              <label htmlFor="report-subject-select">
+                Select Subject
+              </label>
+
+              <select
+                id="report-subject-select"
+                value={selectedReportSubject}
+                onChange={(e) =>
+                  setSelectedReportSubject(
+                    e.target.value
+                  )
+                }
+                disabled={subjects.length === 0}
+              >
+
+                <option value="ALL">
+                  All Subjects
+                </option>
+
+                {subjects.map((subject) => (
+                  <option
+                    key={subject}
+                    value={subject}
+                  >
+                    {subject}
+                  </option>
+                ))}
+
+              </select>
+
+            </div>
+
+
+            {/* REPORT MONTH */}
+
+            <div className="month-selector">
+
               <label htmlFor="month-select">
                 Select Month
               </label>
+
               <select
                 id="month-select"
                 value={selectedMonth}
                 onChange={(e) =>
-                  setSelectedMonth(e.target.value)
+                  setSelectedMonth(
+                    e.target.value
+                  )
                 }
                 disabled={months.length === 0}
               >
+
                 <option value="">
                   Select Month
                 </option>
+
                 {months.map((month) => {
-                  const [year, monthNumber] =
-                    month.split("-");
-                  const monthName = new Date(
-                    Number(year),
-                    Number(monthNumber) - 1,
-                    1
-                  ).toLocaleString(
-                    "en-US",
-                    {
-                      month: "long",
-                      year: "numeric"
-                    }
-                  );
+
+                  const [
+                    year,
+                    monthNumber
+                  ] = month.split("-");
+
+                  const monthName =
+                    new Date(
+                      Number(year),
+                      Number(monthNumber) - 1,
+                      1
+                    ).toLocaleString(
+                      "en-US",
+                      {
+                        month: "long",
+                        year: "numeric"
+                      }
+                    );
+
                   return (
                     <option
                       key={month}
@@ -349,10 +573,46 @@ export default function TeacherAttendance() {
                       {monthName}
                     </option>
                   );
+
                 })}
+
               </select>
+
             </div>
+
+            {/* DEFAULTER THRESHOLD */}
+
+            <div className="month-selector">
+
+              <label htmlFor="defaulter-threshold-select">
+                Defaulter Threshold
+              </label>
+
+              <select
+                id="defaulter-threshold-select"
+                value={selectedDefaulterThreshold}
+                onChange={(e) =>
+                  setSelectedDefaulterThreshold(
+                    Number(e.target.value)
+                  )
+                }
+              >
+                <option value={90}>Below 90%</option>
+                <option value={85}>Below 85%</option>
+                <option value={80}>Below 80%</option>
+                <option value={75}>Below 75%</option>
+                <option value={70}>Below 70%</option>
+                <option value={65}>Below 65%</option>
+                <option value={60}>Below 60%</option>
+                <option value={50}>Below 50%</option>
+              </select>
+
+            </div>
+
+            {/* DOWNLOAD BUTTONS */}
+
             <div className="report-buttons">
+
               <button
                 className="excel-btn"
                 onClick={() =>
@@ -360,13 +620,18 @@ export default function TeacherAttendance() {
                 }
                 disabled={
                   !selectedMonth ||
+                  !selectedReportSubject ||
                   downloading
                 }
               >
+
                 {downloading
                   ? "Generating..."
                   : "📊 Download Monthly Attendance"}
+
               </button>
+
+
               <button
                 className="defaulter-btn"
                 onClick={() =>
@@ -374,14 +639,19 @@ export default function TeacherAttendance() {
                 }
                 disabled={
                   !selectedMonth ||
+                  !selectedReportSubject ||
                   downloading
                 }
               >
+
                 {downloading
                   ? "Generating..."
                   : "⚠ Download Defaulter List"}
+
               </button>
+
             </div>
+
           </div>
         </div>
       {currentLecture && (
@@ -430,7 +700,7 @@ export default function TeacherAttendance() {
                 <th>Name</th>
                 <th>Status</th>
                 <th>Time</th>
-                <th>Action</th>
+                <th className="action-column">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -456,6 +726,8 @@ export default function TeacherAttendance() {
                         className={
                           student.status === "Present"
                             ? "status present"
+                            : student.status === "Leave"
+                            ? "status leave"
                             : "status absent"
                         }
                       >
@@ -465,19 +737,34 @@ export default function TeacherAttendance() {
                     <td>
                       {student.attendance_time}
                     </td>
-                    <td>
+                    <td className="action-column">
                       {student.status === "Absent" ? (
-                        <button
-                          className="mark-present-btn"
-                          onClick={() =>
-                            markStudentPresent(
-                              student.prn,
-                              student.student_name
-                            )
-                          }
-                        >
-                          ✓ Mark Present
-                        </button>
+                        <div className="attendance-actions">
+
+                          <button
+                            className="mark-present-btn"
+                            onClick={() =>
+                              markStudentPresent(
+                                student.prn,
+                                student.student_name
+                              )
+                            }
+                          >
+                            ✓ Mark Present
+                          </button>
+
+                          <button
+                            className="apply-leave-btn"
+                            onClick={() => {
+                              setLeaveStudent(student);
+                              setLeaveType("Sick Leave");
+                              setLeaveComment("");
+                            }}
+                          >
+                            📝 Apply Leave
+                          </button>
+
+                        </div>
                       ) : (
                         <span
                           style={{
@@ -495,7 +782,169 @@ export default function TeacherAttendance() {
             </tbody>
           </table>
         )}
-      </div>
+            </div>
+
+      {leaveStudent && (
+        <div className="leave-modal-overlay">
+
+          <div className="leave-modal">
+
+            <div className="leave-modal-header">
+
+              <div>
+                <h2>Apply Student Leave</h2>
+
+                <p>
+                  Faculty verification required
+                </p>
+              </div>
+
+              <button
+                className="leave-close-btn"
+                onClick={() => setLeaveStudent(null)}
+              >
+                ×
+              </button>
+
+            </div>
+
+            <div className="leave-student-info">
+
+              <p>
+                <b>Student:</b>{" "}
+                {leaveStudent.student_name}
+              </p>
+
+              <p>
+                <b>PRN:</b>{" "}
+                {leaveStudent.prn}
+              </p>
+
+              <p>
+                <b>Subject:</b>{" "}
+                {currentLecture?.subject}
+              </p>
+
+              <p>
+                <b>Date:</b>{" "}
+                {currentLecture?.lecture_date}
+              </p>
+
+            </div>
+
+            <div className="leave-form-group">
+
+              <label htmlFor="leave-type">
+                Leave Type
+              </label>
+
+              <select
+                id="leave-type"
+                value={leaveType}
+                onChange={(e) =>
+                  setLeaveType(e.target.value)
+                }
+              >
+
+                <option value="Sick Leave">
+                  Sick Leave
+                </option>
+
+                <option value="Emergency Leave">
+                  Emergency Leave
+                </option>
+
+                <option value="Casual Leave">
+                  Casual Leave
+                </option>
+
+                <option value="Placement Leave">
+                  Placement Leave
+                </option>
+
+                <option value="Medical Leave">
+                  Medical Leave
+                </option>
+
+                <option value="Family/Personal Leave">
+                  Family/Personal Leave
+                </option>
+
+                <option value="Other">
+                  Other
+                </option>
+
+              </select>
+
+            </div>
+
+            <div className="leave-form-group">
+
+              <label htmlFor="leave-comment">
+                Faculty Verification Comment
+              </label>
+
+              <textarea
+                id="leave-comment"
+                value={leaveComment}
+                onChange={(e) =>
+                  setLeaveComment(e.target.value)
+                }
+                placeholder="Example: Medical certificate verified offline by faculty."
+                rows={4}
+              />
+
+            </div>
+
+            <div className="leave-verification-note">
+
+              <span>✓</span>
+
+              <div>
+
+                <strong>
+                  Offline Proof Verification
+                </strong>
+
+                <p>
+                  Faculty confirms that the student's
+                  supporting document/proof has been
+                  reviewed offline before approving leave.
+                </p>
+
+              </div>
+
+            </div>
+
+            <div className="leave-modal-actions">
+
+              <button
+                className="leave-cancel-btn"
+                onClick={() =>
+                  setLeaveStudent(null)
+                }
+                disabled={applyingLeave}
+              >
+                Cancel
+              </button>
+
+              <button
+                className="leave-approve-btn"
+                onClick={applyStudentLeave}
+                disabled={applyingLeave}
+              >
+                {applyingLeave
+                  ? "Applying..."
+                  : "✓ Approve Leave"}
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+      )}
+
     </div>
   );
 }

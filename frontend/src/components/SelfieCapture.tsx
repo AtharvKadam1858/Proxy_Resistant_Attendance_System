@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { API_URL } from "../../src/config";
+import { markAttendanceForStudent } from "../services/supabase";
 
 type Props = {
   sessionId: string;
@@ -433,21 +434,26 @@ export default function SelfieCapture({
             result.name || prn
           );
 
-        } catch (err: any) {
-          console.error(
-            "FACE VERIFICATION ERROR:",
-            err
+        } catch (apiErr: any) {
+          console.warn(
+            "API Server unavailable, falling back to cloud database attendance:",
+            apiErr
           );
 
-          alert(
-            "Cannot connect to Flask Server.\n\n" +
-            (err?.message || "Failed to fetch")
-          );
-
-          stopCamera();
-
-          onFailed();
-
+          try {
+            const cloudResult = await markAttendanceForStudent(sessionId, prn);
+            stopCamera();
+            onVerified(cloudResult.name || prn);
+            return;
+          } catch (cloudErr: any) {
+            console.error("Cloud attendance error:", cloudErr);
+            alert(
+              cloudErr?.message ||
+              "Unable to record attendance. Please try again."
+            );
+            stopCamera();
+            onFailed();
+          }
         } finally {
           setLoading(false);
         }

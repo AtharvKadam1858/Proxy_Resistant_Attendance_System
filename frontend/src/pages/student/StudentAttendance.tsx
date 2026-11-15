@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../../styles/attendance.css";
 import { API_URL } from "../../config";
+import { getStudentAttendanceHistory } from "../../services/supabase";
 
 interface Attendance {
   subject: string;
@@ -41,18 +42,26 @@ export default function StudentAttendance() {
 
       console.log("Loading attendance for PRN:", prn);
 
-      const res = await fetch(
-        `${API_URL}/student/attendance/${encodeURIComponent(prn)}`
-      );
+      let attendanceData: any = null;
+      try {
+        const res = await fetch(
+          `${API_URL}/student/attendance/${encodeURIComponent(prn)}`
+        );
+        if (res.ok) {
+          attendanceData = await res.json();
+        }
+      } catch {
+        // Fallback to Supabase cloud database
+      }
 
-      const data = await res.json();
+      if (!attendanceData || !attendanceData.success) {
+        attendanceData = await getStudentAttendanceHistory(prn);
+      }
 
-      console.log("Attendance API response:", data);
-
-      if (data.success) {
-        setAttendance(data.attendance || []);
+      if (attendanceData && attendanceData.success) {
+        setAttendance(attendanceData.attendance || []);
         setSummary(
-          data.summary || {
+          attendanceData.summary || {
             total: 0,
             present: 0,
             absent: 0,
@@ -60,7 +69,6 @@ export default function StudentAttendance() {
           }
         );
       } else {
-        console.error("Attendance API error:", data.message);
         setAttendance([]);
       }
     } catch (err) {

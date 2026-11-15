@@ -4,6 +4,7 @@ import { Html5Qrcode } from "html5-qrcode";
 import { useNavigate } from "react-router-dom";
 import SelfieCapture from "../../components/SelfieCapture";
 import { API_URL } from "../../config";
+import { verifySessionQR } from "../../services/supabase";
 
 export default function ScanQR() {
   const navigate = useNavigate();
@@ -74,36 +75,51 @@ export default function ScanQR() {
         return;
       }
 
-      const response = await fetch(
-        `${API_URL}/attendance/verify`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            qr_token: currentQrToken,
-            prn: studentPrn,
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          }),
+      let verifiedSessionId = "";
+      try {
+        const response = await fetch(
+          `${API_URL}/attendance/verify`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              qr_token: currentQrToken,
+              prn: studentPrn,
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+            }),
+          }
+        );
+        const result = await response.json();
+        if (result.success) {
+          verifiedSessionId = result.session_id;
+        } else {
+          // If server gave explicit refusal
+          alert(result.message || "QR verification failed.");
+          scannedRef.current = false;
+          navigate("/profile");
+          return;
         }
-      );
-
-      const result = await response.json();
-      setSessionId(result.session_id);
-
-      if (!result.success) {
-        alert(result.message);
-        scannedRef.current = false;
-        navigate("/profile");
-        return;
+      } catch {
+        // Fallback to Supabase cloud verification
+        const cloudVerify = await verifySessionQR(currentQrToken);
+        if (cloudVerify.success && cloudVerify.session_id) {
+          verifiedSessionId = cloudVerify.session_id;
+        } else {
+          alert(cloudVerify.message || "Invalid or expired QR code.");
+          scannedRef.current = false;
+          navigate("/profile");
+          return;
+        }
       }
-      setShowSelfie(true);
 
+      setSessionId(verifiedSessionId);
+      setShowSelfie(true);
     } catch (err) {
       console.error(err);
-      alert("Server Error");
+      alert("Verification error. Please try again.");
       navigate("/profile");
     }
   },

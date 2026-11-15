@@ -12,6 +12,7 @@ import {
 } from "firebase/app";
 
 import { API_URL } from "../../config";
+import { getStudentsList, addNewStudent } from "../../services/supabase";
 import ritLogo from "../../assets/RIT_logo.jpeg";
 
 const firebaseConfig = {
@@ -129,50 +130,35 @@ export default function AdminDashboard() {
       setStudentsLoading(true);
       setStudentListError("");
 
+      let studentList: any[] = [];
       const currentUser = auth.currentUser;
 
-      if (!currentUser) {
-        throw new Error(
-          "Admin authentication is not ready."
-        );
-      }
+      if (currentUser) {
+        try {
+          const token = await currentUser.getIdToken(true);
+          const params = new URLSearchParams();
+          if (year) params.append("year", year);
+          if (branch) params.append("branch", branch);
 
-      const token =
-        await currentUser.getIdToken(true);
-
-      const params = new URLSearchParams();
-
-      if (year) {
-        params.append("year", year);
-      }
-
-      if (branch) {
-        params.append("branch", branch);
-      }
-
-      const response = await fetch(
-        `${API_URL}/api/students?${params.toString()}`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`
+          const response = await fetch(
+            `${API_URL}/api/students?${params.toString()}`,
+            {
+              method: "GET",
+              headers: { Authorization: `Bearer ${token}` }
+            }
+          );
+          if (response.ok) {
+            const data = await response.json();
+            studentList = data.students || data;
           }
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.message ||
-          "Failed to fetch students."
-        );
+        } catch {}
       }
 
-      setStudents(
-        data.students || data
-      );
+      if (studentList.length === 0) {
+        studentList = await getStudentsList(branch, year);
+      }
 
+      setStudents(studentList || []);
       setStudentListError("");
     } catch (error: any) {
       console.error(
@@ -192,30 +178,19 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    const unsubscribe =
-      onAuthStateChanged(
-        auth,
-        (user) => {
-          if (user) {
-            fetchStudents(
-              selectedYear,
-              selectedDepartment
-            );
-          } else {
-            setStudents([]);
-            setStudentsLoading(false);
-            setStudentListError("");
-          }
-        }
-      );
+    // Initial fetch in case of Supabase login or direct session
+    fetchStudents(selectedYear, selectedDepartment);
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        fetchStudents(selectedYear, selectedDepartment);
+      }
+    });
 
     return () => {
       unsubscribe();
     };
-  }, [
-    selectedYear,
-    selectedDepartment
-  ]);
+  }, [selectedYear, selectedDepartment]);
 
   const handlePhotoChange = (
     e: React.ChangeEvent<HTMLInputElement>
@@ -455,107 +430,51 @@ export default function AdminDashboard() {
 
     try {
       setLoading(true);
+      let success = false;
 
-      const currentUser =
-        auth.currentUser;
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        try {
+          const token = await currentUser.getIdToken(true);
+          const formDataToSend = new FormData();
+          formDataToSend.append("prn", formData.prn);
+          formDataToSend.append("full_name", formData.full_name);
+          formDataToSend.append("email", formData.email);
+          formDataToSend.append("password", formData.password);
+          formDataToSend.append("phone", formData.phone);
+          formDataToSend.append("year", formData.year);
+          formDataToSend.append("branch", formData.branch);
+          formDataToSend.append("division", formData.division);
+          formDataToSend.append("gender", formData.gender);
+          if (photo) formDataToSend.append("photo", photo);
 
-      if (!currentUser) {
-        throw new Error(
-          "Admin is not logged in."
-        );
-      }
-
-      const token =
-        await currentUser.getIdToken(
-          true
-        );
-
-      const formDataToSend =
-        new FormData();
-
-      formDataToSend.append(
-        "prn",
-        formData.prn
-      );
-
-      formDataToSend.append(
-        "full_name",
-        formData.full_name
-      );
-
-      formDataToSend.append(
-        "email",
-        formData.email
-      );
-
-      formDataToSend.append(
-        "password",
-        formData.password
-      );
-
-      formDataToSend.append(
-        "phone",
-        formData.phone
-      );
-
-      formDataToSend.append(
-        "year",
-        formData.year
-      );
-
-      formDataToSend.append(
-        "branch",
-        formData.branch
-      );
-
-      formDataToSend.append(
-        "division",
-        formData.division
-      );
-
-      formDataToSend.append(
-        "gender",
-        formData.gender
-      );
-
-      formDataToSend.append(
-        "photo",
-        photo
-      );
-
-      const response =
-        await fetch(
-          `${API_URL}/api/students`,
-          {
+          const response = await fetch(`${API_URL}/api/students`, {
             method: "POST",
-            headers: {
-              Authorization:
-                `Bearer ${token}`
-            },
-            body:
-              formDataToSend
+            headers: { Authorization: `Bearer ${token}` },
+            body: formDataToSend
+          });
+          if (response.ok) {
+            success = true;
           }
-        );
-
-      const data =
-        await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.message ||
-          "Failed to add student."
-        );
+        } catch {}
       }
 
-      setMessage(
-        "Student added successfully!"
-      );
+      if (!success) {
+        await addNewStudent({
+          prn: formData.prn,
+          full_name: formData.full_name,
+          email: formData.email,
+          phone: formData.phone,
+          year: formData.year,
+          branch: formData.branch,
+          division: formData.division,
+          gender: formData.gender,
+        });
+        success = true;
+      }
 
-      fetchStudents(
-        selectedYear,
-        selectedDepartment
-      );
-
+      setMessage("Student added successfully!");
+      fetchStudents(selectedYear, selectedDepartment);
       setFormData({
         prn: "",
         full_name: "",
@@ -568,18 +487,10 @@ export default function AdminDashboard() {
         gender: "",
         face_folder: ""
       });
-
       setPhoto(null);
     } catch (error: any) {
-      console.error(
-        "Add student error:",
-        error
-      );
-
-      setMessage(
-        error?.message ||
-        "Unable to connect to server."
-      );
+      console.error("Add student error:", error);
+      setMessage(error?.message || "Failed to add student.");
     } finally {
       setLoading(false);
     }

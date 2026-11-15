@@ -1,0 +1,406 @@
+// =====================================================================
+// SUPABASE REAL-TIME CLOUD DATABASE CLIENT & SERVICE LAYER
+// =====================================================================
+
+export const SUPABASE_URL = "https://ccvuqarrkinazzyxbxqg.supabase.co";
+export const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNjdnVxYXJya2luYXp6eXhieHFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ3MzEwOTMsImV4cCI6MjExMDMwNzA5M30.Sl1nAdh89pRPDpSJLtB8OEqSSizBWnR4N6EPl6LOOJU";
+
+const defaultHeaders = {
+  apikey: SUPABASE_ANON_KEY,
+  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  "Content-Type": "application/json",
+};
+
+/**
+ * Generic REST request helper to Supabase PostgREST API
+ */
+export async function supabaseQuery(endpoint: string, options: RequestInit = {}) {
+  const url = `${SUPABASE_URL}/rest/v1/${endpoint}`;
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...defaultHeaders,
+      ...(options.headers || {}),
+    },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(errorBody || `Supabase error (${response.status})`);
+  }
+
+  // Handle 204 No Content
+  if (response.status === 204) {
+    return null;
+  }
+
+  return response.json();
+}
+
+// ---------------------------------------------------------------------
+// 1. AUTHENTICATION & PROFILE
+// ---------------------------------------------------------------------
+
+export async function loginUserWithSupabase(email: string, role: string) {
+  const cleanEmail = email.trim().toLowerCase();
+
+  if (role === "student") {
+    const data = await supabaseQuery(
+      `students?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
+    );
+    if (!data || data.length === 0) {
+      throw new Error("Student account not found in database.");
+    }
+    return {
+      success: true,
+      role: "student",
+      prn: data[0].prn,
+      student: data[0],
+    };
+  }
+
+  if (role === "teacher") {
+    const data = await supabaseQuery(
+      `teachers?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
+    );
+    if (!data || data.length === 0) {
+      throw new Error("Teacher account not found in database.");
+    }
+    return {
+      success: true,
+      role: "teacher",
+      teacher_id: data[0].teacher_id,
+      teacher: data[0],
+    };
+  }
+
+  if (role === "admin") {
+    const data = await supabaseQuery(
+      `admins?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
+    );
+    if (!data || data.length === 0) {
+      throw new Error("Admin account not found in database.");
+    }
+    return {
+      success: true,
+      role: "admin",
+      admin_id: data[0].admin_id,
+      admin: data[0],
+    };
+  }
+
+  throw new Error("Invalid role selected.");
+}
+
+export async function getStudentProfile(prnOrEmail: string) {
+  const clean = prnOrEmail.trim();
+  const data = await supabaseQuery(
+    `students?or=(prn.eq.${encodeURIComponent(clean)},email.ilike.${encodeURIComponent(clean)})&limit=1`
+  );
+  if (!data || data.length === 0) return null;
+  return data[0];
+}
+
+export async function getTeacherProfile(teacherIdOrEmail: string) {
+  const clean = teacherIdOrEmail.trim();
+  const data = await supabaseQuery(
+    `teachers?or=(teacher_id.eq.${encodeURIComponent(clean)},email.ilike.${encodeURIComponent(clean)})&limit=1`
+  );
+  if (!data || data.length === 0) return null;
+  return data[0];
+}
+
+// ---------------------------------------------------------------------
+// 2. TEACHER ATTENDANCE SESSION MANAGEMENT
+// ---------------------------------------------------------------------
+
+export async function startAttendanceSession(params: {
+  teacher_id: string;
+  department: string;
+  year: string;
+  subject: string;
+  lat?: number;
+  lng?: number;
+}) {
+  const sessionId = crypto.randomUUID();
+  const qrToken = crypto.randomUUID();
+  const now = new Date();
+  const todayStr = now.toISOString().split("T")[0];
+  const timeStr = now.toTimeString().split(" ")[0];
+
+  const payload = {
+    session_id: sessionId,
+    qr_token: qrToken,
+    teacher_id: params.teacher_id,
+    subject: params.subject,
+    department: params.department,
+    year: params.year,
+    lecture_date: todayStr,
+    start_time: timeStr,
+    lat: params.lat || null,
+    lng: params.lng || null,
+    status: "ACTIVE",
+  };
+
+  await supabaseQuery("attendance_sessions", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(payload),
+  });
+
+  return {
+    success: true,
+    session_id: sessionId,
+    qr_token: qrToken,
+  };
+}
+
+export async function refreshAttendanceSession(sessionId: string) {
+  const newQrToken = crypto.randomUUID();
+
+  await supabaseQuery(`attendance_sessions?session_id=eq.${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ qr_token: newQrToken }),
+  });
+
+  return {
+    success: true,
+    session_id: sessionId,
+    qr_token: newQrToken,
+  };
+}
+
+export async function stopAttendanceSession(sessionId: string) {
+  const nowTime = new Date().toTimeString().split(" ")[0];
+
+  await supabaseQuery(`attendance_sessions?session_id=eq.${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      status: "CLOSED",
+      end_time: nowTime,
+    }),
+  });
+
+  return { success: true };
+}
+
+export async function getLiveAttendance(sessionId: string) {
+  const sessionData = await supabaseQuery(
+    `attendance_sessions?session_id=eq.${sessionId}&limit=1`
+  );
+  const attendanceList = await supabaseQuery(
+    `attendance?session_id=eq.${sessionId}&order=attendance_time.asc`
+  );
+
+  const formatted = (attendanceList || []).map((item: any) => ({
+    ...item,
+    attendance_time: item.attendance_time ? new Date(item.attendance_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "Just now"
+  }));
+
+  return {
+    success: true,
+    session: sessionData && sessionData[0] ? sessionData[0] : null,
+    students: formatted,
+    attendance: formatted,
+    present_count: formatted.filter((r: any) => r.status === "Present").length,
+  };
+}
+
+export async function getTeacherSessions(teacherId: string) {
+  const sessions = await supabaseQuery(
+    `attendance_sessions?teacher_id=eq.${encodeURIComponent(
+      teacherId
+    )}&order=lecture_date.desc,start_time.desc`
+  );
+  return sessions || [];
+}
+
+export async function markStudentPresent(sessionId: string, prn: string, teacherId: string) {
+  // Fetch session details
+  const session = await supabaseQuery(
+    `attendance_sessions?session_id=eq.${sessionId}&limit=1`
+  );
+  const student = await supabaseQuery(`students?prn=eq.${prn}&limit=1`);
+
+  if (!session || !session[0] || !student || !student[0]) {
+    throw new Error("Session or Student not found");
+  }
+
+  const payload = {
+    session_id: sessionId,
+    teacher_id: teacherId,
+    student_name: student[0].full_name,
+    prn: prn,
+    subject: session[0].subject,
+    department: session[0].department,
+    year: session[0].year,
+    status: "Present",
+    attendance_date: session[0].lecture_date,
+    attendance_time: new Date().toISOString(),
+  };
+
+  // Upsert into attendance
+  await supabaseQuery("attendance", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(payload),
+  });
+
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------
+// 3. STUDENT QR VERIFICATION & ATTENDANCE
+// ---------------------------------------------------------------------
+
+export async function verifySessionQR(qrToken: string) {
+  // Find active session matching qrToken
+  const sessions = await supabaseQuery(
+    `attendance_sessions?qr_token=eq.${encodeURIComponent(
+      qrToken
+    )}&status=eq.ACTIVE&limit=1`
+  );
+
+  if (!sessions || sessions.length === 0) {
+    return {
+      success: false,
+      message: "Invalid or expired QR code. Please scan the current code.",
+    };
+  }
+
+  return {
+    success: true,
+    session_id: sessions[0].session_id,
+    session: sessions[0],
+  };
+}
+
+export async function markAttendanceForStudent(sessionId: string, prn: string) {
+  const sessions = await supabaseQuery(
+    `attendance_sessions?session_id=eq.${sessionId}&limit=1`
+  );
+  if (!sessions || sessions.length === 0 || sessions[0].status !== "ACTIVE") {
+    throw new Error("Attendance session is not active.");
+  }
+  const session = sessions[0];
+
+  const students = await supabaseQuery(`students?prn=eq.${prn}&limit=1`);
+  if (!students || students.length === 0) {
+    throw new Error("Student record not found in system.");
+  }
+  const student = students[0];
+
+  // Verify department and year match
+  if (student.branch.trim().toLowerCase() !== session.department.trim().toLowerCase()) {
+    throw new Error("Student does not belong to this department.");
+  }
+  if (student.year.trim().toLowerCase() !== session.year.trim().toLowerCase()) {
+    throw new Error("Student does not belong to this class/year.");
+  }
+
+  // Check if already marked
+  const existing = await supabaseQuery(
+    `attendance?session_id=eq.${sessionId}&prn=eq.${prn}&limit=1`
+  );
+  if (existing && existing.length > 0) {
+    return {
+      success: true,
+      already_marked: true,
+      message: "Attendance has already been recorded for this lecture.",
+      prn,
+      name: student.full_name,
+    };
+  }
+
+  // Record attendance
+  const record = {
+    session_id: sessionId,
+    teacher_id: session.teacher_id,
+    student_name: student.full_name,
+    prn: prn,
+    subject: session.subject,
+    department: session.department,
+    year: session.year,
+    attendance_date: session.lecture_date,
+    attendance_time: new Date().toISOString(),
+    status: "Present",
+  };
+
+  await supabaseQuery("attendance", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(record),
+  });
+
+  return {
+    success: true,
+    already_marked: false,
+    message: "Attendance marked successfully!",
+    prn,
+    name: student.full_name,
+  };
+}
+
+export async function getStudentAttendanceHistory(prn: string) {
+  const records = await supabaseQuery(
+    `attendance?prn=eq.${encodeURIComponent(
+      prn
+    )}&order=attendance_date.desc,attendance_time.desc`
+  );
+  const formatted = (records || []).map((r: any) => ({
+    ...r,
+    date: r.attendance_date,
+    start_time: r.attendance_time ? new Date(r.attendance_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "",
+    end_time: "",
+  }));
+  const presentCount = formatted.filter((r: any) => r.status === "Present").length;
+  const totalLectures = formatted.length;
+  const percent = totalLectures > 0 ? ((presentCount / totalLectures) * 100).toFixed(1) : "0.0";
+
+  return {
+    success: true,
+    attendance: formatted,
+    summary: {
+      total: totalLectures,
+      present: presentCount,
+      absent: totalLectures - presentCount,
+      percentage: Number(percent),
+    },
+    total_lectures: totalLectures,
+    present_count: presentCount,
+    percentage: percent,
+  };
+}
+
+// ---------------------------------------------------------------------
+// 4. ADMIN STUDENT MASTER MANAGEMENT
+// ---------------------------------------------------------------------
+
+export async function getStudentsList(branch?: string, year?: string, search?: string) {
+  let query = "students?select=*&order=full_name.asc";
+  if (branch) query += `&branch=eq.${encodeURIComponent(branch)}`;
+  if (year) query += `&year=eq.${encodeURIComponent(year)}`;
+  if (search) query += `&or=(full_name.ilike.*${encodeURIComponent(search)}*,prn.ilike.*${encodeURIComponent(search)}*)`;
+
+  const students = await supabaseQuery(query);
+  return students || [];
+}
+
+export async function addNewStudent(studentData: {
+  prn: string;
+  full_name: string;
+  email: string;
+  phone?: string;
+  year: string;
+  branch: string;
+  division: string;
+  gender?: string;
+}) {
+  await supabaseQuery("students", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(studentData),
+  });
+  return { success: true, message: "Student added successfully to database." };
+}

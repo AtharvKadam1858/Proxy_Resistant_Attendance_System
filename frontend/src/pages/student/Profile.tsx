@@ -10,6 +10,7 @@ import {
 import "../../styles/profile.css";
 
 import { API_URL } from "../../config";
+import { getStudentProfile } from "../../services/supabase";
 import ritLogo from "../../assets/RIT_logo.jpeg";
 
 import {
@@ -92,23 +93,27 @@ export default function Profile() {
           setLoading(false);
           return;
         }
-        const response =
-          await fetch(
+        let studentData = null;
+        try {
+          const response = await fetch(
             `${API_URL}/student/profile/${encodeURIComponent(prn)}`
           );
-        const data =
-          await response.json();
-        console.log(
-          "Profile API response:",
-          data
-        );
-        if (!response.ok) {
-          throw new Error(
-            data.message ||
-            "Student profile not found."
-          );
+          if (response.ok) {
+            studentData = await response.json();
+          }
+        } catch {
+          // API not available, proceed to cloud DB fallback
         }
-        setStudent(data);
+
+        if (!studentData) {
+          studentData = await getStudentProfile(prn);
+        }
+
+        if (!studentData) {
+          throw new Error("Student profile not found in cloud database.");
+        }
+
+        setStudent(studentData);
         setLoading(false);
       } catch (err: any) {
         console.error(
