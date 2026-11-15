@@ -66,8 +66,6 @@ export default function ScanQR() {
           navigator.geolocation.getCurrentPosition(
   async (pos) => {
     try {
-      const studentUid = localStorage.getItem("uid");
-
       const studentPrn = localStorage.getItem("prn");
 
       if (!studentPrn) {

@@ -1,0 +1,17 @@
+{
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.py" },
+    { "source": "/attendance/(.*)", "destination": "/api/index.py" },
+    { "source": "/verify-face", "destination": "/api/index.py" },
+    { "source": "/student/profile/(.*)", "destination": "/api/index.py" },
+    { "source": "/student/photo/(.*)", "destination": "/api/index.py" },
+    { "source": "/student/attendance/(.*)", "destination": "/api/index.py" },
+    { "source": "/teacher/profile/(.*)", "destination": "/api/index.py" },
+    { "source": "/teacher/sessions/(.*)", "destination": "/api/index.py" },
+    { "source": "/teacher/attendance/mark-present", "destination": "/api/index.py" },
+    { "source": "/teacher/attendance/apply-leave", "destination": "/api/index.py" },
+    { "source": "/teacher/monthly-attendance/(.*)", "destination": "/api/index.py" },
+    { "source": "/teacher/monthly-defaulters/(.*)", "destination": "/api/index.py" },
+    { "source": "/(.*)", "destination": "/" }
+  ]
+}

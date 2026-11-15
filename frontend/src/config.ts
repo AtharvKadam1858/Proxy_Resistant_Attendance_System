@@ -1,3 +1,8 @@
-// Automatically uses the same IP address as the frontend
-
-export const API_URL = `http://${window.location.hostname}:5000`;
+// Production / Development dynamic API URL configuration
+export const API_URL =
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== "undefined" &&
+  window.location.hostname !== "localhost" &&
+  window.location.hostname !== "127.0.0.1"
+    ? window.location.origin
+    : `http://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:5000`);

@@ -1,4 +1,5 @@
 import os
+import zipfile
 from datetime import datetime, date, timedelta
 from io import BytesIO
 from openpyxl import Workbook
@@ -6,7 +7,7 @@ from openpyxl.styles import Font, Alignment
 from openpyxl.utils import get_column_letter
 import cv2
 import numpy as np
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 import firebase_admin
 from firebase_admin import credentials
@@ -19,6 +20,8 @@ from attendance_session import (
 )
 from database import get_db_connection
 from face_verify import verify_face
+import openpyxl
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
@@ -34,21 +37,27 @@ CORS(
         "Authorization"
     ]
 )
+SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
 SERVICE_ACCOUNT_PATH = os.path.join(
     os.path.dirname(__file__),
     "serviceAccountKey.json"
 )
 try:
-    if not os.path.exists(SERVICE_ACCOUNT_PATH):
-        raise FileNotFoundError(
-            "serviceAccountKey.json not found in backend folder."
-        )
     if not firebase_admin._apps:
-        cred = credentials.Certificate(
-            SERVICE_ACCOUNT_PATH
-        )
-        firebase_admin.initialize_app(cred)
-    print("Firebase Admin SDK initialized successfully.")
+        if SERVICE_ACCOUNT_JSON:
+            import json
+            cred_dict = json.loads(SERVICE_ACCOUNT_JSON)
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+            print("Firebase Admin SDK initialized successfully from environment variable.")
+        elif os.path.exists(SERVICE_ACCOUNT_PATH):
+            cred = credentials.Certificate(
+                SERVICE_ACCOUNT_PATH
+            )
+            firebase_admin.initialize_app(cred)
+            print("Firebase Admin SDK initialized successfully from file.")
+        else:
+            print("Notice: serviceAccountKey.json not found and FIREBASE_SERVICE_ACCOUNT not set.")
 except Exception as e:
     print(
         "Firebase initialization failed:",
@@ -64,8 +73,10 @@ def verify_firebase_token():
         "Bearer ",
         1
     )[1]
-    decoded_token = auth.verify_id_token(id_token)
-    return decoded_token
+    if firebase_admin._apps:
+        decoded_token = auth.verify_id_token(id_token)
+        return decoded_token
+    return {"token": id_token}
 
 @app.route("/")
 def home():
@@ -632,6 +643,741 @@ def add_student():
             "message":
                 str(e)
         }), 500
+
+# =========================================================
+# BULK STUDENT REGISTRATION
+# EXCEL + PHOTO ZIP
+# =========================================================
+
+@app.route(
+    "/api/students/bulk-upload",
+    methods=["POST"]
+)
+def bulk_upload_students():
+
+    connection = None
+    cursor = None
+
+    try:
+
+        # -------------------------------------------------
+        # VERIFY FIREBASE TOKEN
+        # -------------------------------------------------
+
+        decoded_token = verify_firebase_token()
+
+        if not decoded_token:
+            return jsonify({
+                "success": False,
+                "message": "Unauthorized."
+            }), 401
+
+        # -------------------------------------------------
+        # CHECK EXCEL FILE
+        # -------------------------------------------------
+
+        if "file" not in request.files:
+            return jsonify({
+                "success": False,
+                "message": "Excel file is required."
+            }), 400
+
+        excel_file = request.files["file"]
+
+        if not excel_file.filename:
+            return jsonify({
+                "success": False,
+                "message": "No Excel file selected."
+            }), 400
+
+        excel_filename = secure_filename(
+            excel_file.filename
+        )
+
+        # Only XLSX
+        if not excel_filename.lower().endswith(".xlsx"):
+            return jsonify({
+                "success": False,
+                "message": "Only .xlsx Excel files are allowed."
+            }), 400
+
+        # -------------------------------------------------
+        # CHECK PHOTO ZIP
+        # -------------------------------------------------
+
+        if "photos_zip" not in request.files:
+            return jsonify({
+                "success": False,
+                "message": "Student photos ZIP file is required."
+            }), 400
+
+        photos_zip = request.files["photos_zip"]
+
+        if not photos_zip.filename:
+            return jsonify({
+                "success": False,
+                "message": "No student photos ZIP file selected."
+            }), 400
+
+        zip_filename = secure_filename(
+            photos_zip.filename
+        )
+
+        if not zip_filename.lower().endswith(".zip"):
+            return jsonify({
+                "success": False,
+                "message": "Only .zip photo files are allowed."
+            }), 400
+
+        # -------------------------------------------------
+        # LOAD EXCEL
+        # -------------------------------------------------
+
+        workbook = openpyxl.load_workbook(
+            excel_file,
+            data_only=True
+        )
+
+        worksheet = workbook.active
+
+        rows = list(
+            worksheet.iter_rows(
+                values_only=True
+            )
+        )
+
+        if not rows:
+            return jsonify({
+                "success": False,
+                "message": "Excel file is empty."
+            }), 400
+
+        # -------------------------------------------------
+        # READ EXCEL HEADERS
+        # -------------------------------------------------
+
+        headers = [
+            str(cell).strip()
+            if cell is not None
+            else ""
+            for cell in rows[0]
+        ]
+
+        required_columns = [
+            "PRN",
+            "Full Name",
+            "Email",
+            "Password",
+            "Phone",
+            "Year",
+            "Branch",
+            "Division"
+        ]
+
+        missing_columns = [
+            column
+            for column in required_columns
+            if column not in headers
+        ]
+
+        if missing_columns:
+            return jsonify({
+                "success": False,
+                "message": "Missing required Excel columns.",
+                "missing_columns": missing_columns
+            }), 400
+
+        column_index = {
+            column: headers.index(column)
+            for column in headers
+        }
+
+        # -------------------------------------------------
+        # OPEN ZIP
+        # -------------------------------------------------
+
+        try:
+
+            zip_data = photos_zip.read()
+
+            zip_file = zipfile.ZipFile(
+                BytesIO(zip_data),
+                "r"
+            )
+
+        except zipfile.BadZipFile:
+
+            return jsonify({
+                "success": False,
+                "message": "Invalid or corrupted ZIP file."
+            }), 400
+
+        # -------------------------------------------------
+        # ALLOWED IMAGE TYPES
+        # -------------------------------------------------
+
+        allowed_extensions = {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp"
+        }
+
+        # -------------------------------------------------
+        # BUILD PHOTO MAP
+        #
+        # Example:
+        #
+        # 23CSE001.jpg
+        # 23CSE002.png
+        #
+        # becomes:
+        #
+        # {
+        #     "23CSE001": "23CSE001.jpg",
+        #     "23CSE002": "23CSE002.png"
+        # }
+        # -------------------------------------------------
+
+        photo_map = {}
+
+        for zip_name in zip_file.namelist():
+
+            # Ignore directories
+            if zip_name.endswith("/"):
+                continue
+
+            # Prevent unsafe ZIP paths
+            normalized_name = zip_name.replace("\\", "/")
+
+            if ".." in normalized_name.split("/"):
+                continue
+
+            filename = os.path.basename(
+                normalized_name
+            )
+
+            extension = os.path.splitext(
+                filename
+            )[1].lower()
+
+            if extension not in allowed_extensions:
+                continue
+
+            photo_prn = os.path.splitext(
+                filename
+            )[0].strip()
+
+            if not photo_prn:
+                continue
+
+            # Only one photo per PRN
+            if photo_prn in photo_map:
+                return jsonify({
+                    "success": False,
+                    "message":
+                        f"Multiple photos found for PRN {photo_prn}. "
+                        f"Only one photo per PRN is allowed."
+                }), 400
+
+            photo_map[photo_prn] = zip_name
+
+        # -------------------------------------------------
+        # DATABASE
+        # -------------------------------------------------
+
+        connection = get_db_connection()
+
+        cursor = connection.cursor(
+            dictionary=True
+        )
+
+        successful = 0
+        failed = 0
+        errors = []
+
+        dataset_path = os.path.join(
+            os.path.dirname(__file__),
+            "dataset"
+        )
+
+        os.makedirs(
+            dataset_path,
+            exist_ok=True
+        )
+
+        # -------------------------------------------------
+        # PROCESS EACH EXCEL ROW
+        # -------------------------------------------------
+
+        for excel_row_number, row in enumerate(
+            rows[1:],
+            start=2
+        ):
+
+            firebase_user = None
+            saved_image_path = None
+            student_folder = None
+
+            try:
+
+                # -----------------------------------------
+                # HELPER
+                # -----------------------------------------
+
+                def get_value(column):
+
+                    index = column_index.get(
+                        column
+                    )
+
+                    if index is None:
+                        return ""
+
+                    if index >= len(row):
+                        return ""
+
+                    value = row[index]
+
+                    if value is None:
+                        return ""
+
+                    return str(value).strip()
+
+                # -----------------------------------------
+                # READ DATA
+                # -----------------------------------------
+
+                prn = get_value("PRN")
+
+                full_name = get_value(
+                    "Full Name"
+                )
+
+                email = get_value(
+                    "Email"
+                ).lower()
+
+                password = get_value(
+                    "Password"
+                )
+
+                phone = get_value(
+                    "Phone"
+                )
+
+                year = get_value(
+                    "Year"
+                )
+
+                branch = get_value(
+                    "Branch"
+                )
+
+                division = get_value(
+                    "Division"
+                )
+
+                gender = get_value(
+                    "Gender"
+                )
+
+                # -----------------------------------------
+                # VALIDATE REQUIRED DATA
+                # -----------------------------------------
+
+                if not all([
+                    prn,
+                    full_name,
+                    email,
+                    password,
+                    phone,
+                    year,
+                    branch,
+                    division
+                ]):
+
+                    raise Exception(
+                        "Required Excel field is missing."
+                    )
+
+                # -----------------------------------------
+                # VALIDATE PASSWORD
+                # -----------------------------------------
+
+                if len(password) < 6:
+
+                    raise Exception(
+                        "Password must contain at least 6 characters."
+                    )
+
+                # -----------------------------------------
+                # VALIDATE PRN
+                # -----------------------------------------
+
+                if (
+                    "/" in prn
+                    or "\\" in prn
+                    or prn in [".", ".."]
+                ):
+
+                    raise Exception(
+                        "Invalid PRN format."
+                    )
+
+                # -----------------------------------------
+                # FIND PHOTO
+                # -----------------------------------------
+
+                photo_zip_path = photo_map.get(
+                    prn
+                )
+
+                if not photo_zip_path:
+
+                    raise Exception(
+                        f"Photo not found in ZIP for PRN {prn}."
+                    )
+
+                # -----------------------------------------
+                # CHECK DUPLICATE PRN
+                # -----------------------------------------
+
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM students
+                    WHERE prn = %s
+                    LIMIT 1
+                    """,
+                    (prn,)
+                )
+
+                existing_prn = cursor.fetchone()
+
+                if existing_prn:
+
+                    raise Exception(
+                        f"PRN {prn} already exists."
+                    )
+
+                # -----------------------------------------
+                # CHECK DUPLICATE EMAIL
+                # -----------------------------------------
+
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM students
+                    WHERE LOWER(email) = LOWER(%s)
+                    LIMIT 1
+                    """,
+                    (email,)
+                )
+
+                existing_email = cursor.fetchone()
+
+                if existing_email:
+
+                    raise Exception(
+                        f"Email {email} already exists."
+                    )
+
+                # -----------------------------------------
+                # CHECK FIREBASE EMAIL
+                # -----------------------------------------
+
+                try:
+
+                    auth.get_user_by_email(
+                        email
+                    )
+
+                    raise Exception(
+                        f"Firebase account already exists for {email}."
+                    )
+
+                except auth.UserNotFoundError:
+
+                    pass
+
+                # -----------------------------------------
+                # CREATE FIREBASE ACCOUNT
+                # -----------------------------------------
+
+                firebase_user = auth.create_user(
+                    email=email,
+                    password=password,
+                    display_name=full_name
+                )
+
+                # -----------------------------------------
+                # CREATE STUDENT DATASET FOLDER
+                # -----------------------------------------
+
+                student_folder = os.path.join(
+                    dataset_path,
+                    prn
+                )
+
+                os.makedirs(
+                    student_folder,
+                    exist_ok=True
+                )
+
+                # -----------------------------------------
+                # READ PHOTO FROM ZIP
+                # -----------------------------------------
+
+                original_photo_name = os.path.basename(
+                    photo_zip_path
+                )
+
+                extension = os.path.splitext(
+                    original_photo_name
+                )[1].lower()
+
+                if extension not in allowed_extensions:
+
+                    raise Exception(
+                        "Unsupported photo format."
+                    )
+
+                photo_bytes = zip_file.read(
+                    photo_zip_path
+                )
+
+                if not photo_bytes:
+
+                    raise Exception(
+                        f"Photo file for PRN {prn} is empty."
+                    )
+
+                # -----------------------------------------
+                # SAVE AS image_1.<extension>
+                # -----------------------------------------
+
+                image_filename = (
+                    "image_1" + extension
+                )
+
+                saved_image_path = os.path.join(
+                    student_folder,
+                    image_filename
+                )
+
+                with open(
+                    saved_image_path,
+                    "wb"
+                ) as image_file:
+
+                    image_file.write(
+                        photo_bytes
+                    )
+
+                print(
+                    "Bulk student photo saved:",
+                    saved_image_path
+                )
+
+                # -----------------------------------------
+                # INSERT MYSQL
+                # -----------------------------------------
+
+                cursor.execute(
+                    """
+                    INSERT INTO students
+                    (
+                        prn,
+                        full_name,
+                        email,
+                        phone,
+                        year,
+                        branch,
+                        division,
+                        gender,
+                        face_folder
+                    )
+                    VALUES
+                    (
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    )
+                    """,
+                    (
+                        prn,
+                        full_name,
+                        email,
+                        phone,
+                        year,
+                        branch,
+                        division,
+                        gender,
+                        prn
+                    )
+                )
+
+                connection.commit()
+
+                successful += 1
+
+            # ---------------------------------------------
+            # ROW ERROR / ROLLBACK
+            # ---------------------------------------------
+
+            except Exception as row_error:
+
+                connection.rollback()
+
+                # Delete Firebase account
+                if firebase_user:
+
+                    try:
+
+                        auth.delete_user(
+                            firebase_user.uid
+                        )
+
+                    except Exception as delete_error:
+
+                        print(
+                            "Firebase rollback error:",
+                            delete_error
+                        )
+
+                # Delete saved photo
+                if saved_image_path:
+
+                    try:
+
+                        if os.path.exists(
+                            saved_image_path
+                        ):
+
+                            os.remove(
+                                saved_image_path
+                            )
+
+                    except Exception as photo_error:
+
+                        print(
+                            "Photo rollback error:",
+                            photo_error
+                        )
+
+                # Delete empty PRN folder
+                if student_folder:
+
+                    try:
+
+                        if (
+                            os.path.exists(student_folder)
+                            and
+                            not os.listdir(student_folder)
+                        ):
+
+                            os.rmdir(
+                                student_folder
+                            )
+
+                    except Exception:
+                        pass
+
+                failed += 1
+
+                errors.append({
+                    "row":
+                        excel_row_number,
+
+                    "prn":
+                        prn
+                        if "prn" in locals()
+                        else "",
+
+                    "message":
+                        str(row_error)
+                })
+
+        # -------------------------------------------------
+        # CLOSE DATABASE
+        # -------------------------------------------------
+
+        cursor.close()
+        connection.close()
+
+        cursor = None
+        connection = None
+
+        zip_file.close()
+
+        total = len(rows) - 1
+
+        # -------------------------------------------------
+        # RESPONSE
+        # -------------------------------------------------
+
+        return jsonify({
+
+            "success": True,
+
+            "message":
+                f"Bulk registration completed. "
+                f"{successful} students registered, "
+                f"{failed} failed.",
+
+            "total":
+                total,
+
+            "successful":
+                successful,
+
+            "failed":
+                failed,
+
+            "errors":
+                errors
+
+        }), 200
+
+    # =====================================================
+    # COMPLETE BULK UPLOAD ERROR
+    # =====================================================
+
+    except Exception as error:
+
+        print(
+            "BULK STUDENT UPLOAD ERROR:",
+            error
+        )
+
+        try:
+
+            if cursor:
+                cursor.close()
+
+            if connection:
+                connection.close()
+
+        except Exception:
+            pass
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+                f"Bulk upload failed: {str(error)}"
+
+        }), 500
+
+    
 @app.route(
     "/student/profile/<prn>",
     methods=["GET"]
@@ -681,7 +1427,426 @@ def get_student_profile(prn):
             "message":
                 str(e)
         }), 500
-    
+
+# =========================================
+# STUDENT PROFILE PHOTO UPLOAD
+# =========================================
+
+@app.route(
+    "/student/profile/photo",
+    methods=["POST"]
+)
+def update_student_profile_photo():
+
+    try:
+
+        # -----------------------------------------
+        # Verify Firebase authentication
+        # -----------------------------------------
+
+        decoded_token = verify_firebase_token()
+
+        firebase_email = (
+            decoded_token.get("email") or ""
+        ).strip().lower()
+
+
+        if not firebase_email:
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "Firebase account email not found."
+            }), 401
+
+
+        # -----------------------------------------
+        # Get PRN
+        # -----------------------------------------
+
+        prn = (
+            request.form.get("prn") or ""
+        ).strip()
+
+
+        if not prn:
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "PRN is required."
+            }), 400
+
+
+        # -----------------------------------------
+        # Get uploaded photo
+        # -----------------------------------------
+
+        photo = request.files.get("photo")
+
+
+        if not photo:
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "Please select a photo."
+            }), 400
+
+
+        # -----------------------------------------
+        # Validate file extension
+        # -----------------------------------------
+
+        original_filename = (
+            photo.filename or ""
+        ).strip()
+
+
+        if not original_filename:
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "Invalid photo filename."
+            }), 400
+
+
+        allowed_extensions = {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp"
+        }
+
+
+        extension = os.path.splitext(
+            original_filename
+        )[1].lower()
+
+
+        if extension not in allowed_extensions:
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "Only JPG, JPEG, PNG and WEBP images are allowed."
+            }), 400
+
+
+        # -----------------------------------------
+        # Connect to MySQL
+        # -----------------------------------------
+
+        conn = get_db_connection()
+
+        cursor = conn.cursor(
+            dictionary=True
+        )
+
+
+        # -----------------------------------------
+        # Find student
+        # -----------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                prn,
+                email,
+                face_folder
+            FROM students
+            WHERE prn = %s
+            LIMIT 1
+            """,
+            (prn,)
+        )
+
+
+        student = cursor.fetchone()
+
+
+        if not student:
+
+            cursor.close()
+            conn.close()
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "Student not found."
+            }), 404
+
+
+        # -----------------------------------------
+        # Security:
+        # Make sure logged-in Firebase email
+        # belongs to this student.
+        # -----------------------------------------
+
+        student_email = (
+            student["email"] or ""
+        ).strip().lower()
+
+
+        if firebase_email != student_email:
+
+            cursor.close()
+            conn.close()
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "You are not authorized to update this student's photo."
+            }), 403
+
+
+        # -----------------------------------------
+        # Determine student folder
+        # -----------------------------------------
+
+        face_folder = str(
+            student["face_folder"] or prn
+        ).strip()
+
+
+        dataset_path = os.path.join(
+            os.path.dirname(__file__),
+            "dataset"
+        )
+
+
+        student_folder = os.path.join(
+            dataset_path,
+            face_folder
+        )
+
+
+        os.makedirs(
+            student_folder,
+            exist_ok=True
+        )
+
+
+        # -----------------------------------------
+        # Delete old profile images
+        # -----------------------------------------
+
+        for filename in os.listdir(
+            student_folder
+        ):
+
+            old_file_path = os.path.join(
+                student_folder,
+                filename
+            )
+
+
+            if not os.path.isfile(
+                old_file_path
+            ):
+                continue
+
+
+            old_extension = os.path.splitext(
+                filename
+            )[1].lower()
+
+
+            if old_extension in allowed_extensions:
+
+                try:
+
+                    os.remove(
+                        old_file_path
+                    )
+
+                except Exception as delete_error:
+
+                    print(
+                        "OLD PHOTO DELETE ERROR:",
+                        str(delete_error)
+                    )
+
+
+        # -----------------------------------------
+        # Save new profile photo
+        # -----------------------------------------
+
+        new_filename = (
+            "image_1" + extension
+        )
+
+
+        new_file_path = os.path.join(
+            student_folder,
+            new_filename
+        )
+
+
+        photo.save(
+            new_file_path
+        )
+
+
+        # -----------------------------------------
+        # Close DB
+        # -----------------------------------------
+
+        cursor.close()
+        conn.close()
+
+
+        print(
+            f"PROFILE PHOTO UPDATED: "
+            f"{prn} -> {new_file_path}"
+        )
+
+
+        return jsonify({
+
+            "success": True,
+
+            "message":
+                "Profile photo updated successfully.",
+
+            "prn":
+                prn,
+
+            "photo_url":
+                f"/student/photo/{prn}"
+
+        }), 200
+
+
+    except Exception as e:
+
+        print(
+            "STUDENT PHOTO UPLOAD ERROR:",
+            str(e)
+        )
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+                str(e)
+
+        }), 500
+
+@app.route(
+    "/student/photo/<prn>",
+    methods=["GET"]
+)
+def get_student_photo(prn):
+    try:
+        prn = str(prn).strip()
+
+        if not prn:
+            return jsonify({
+                "success": False,
+                "message": "PRN is required."
+            }), 400
+
+        # Get student information from MySQL
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT
+                prn,
+                face_folder
+            FROM students
+            WHERE prn = %s
+            LIMIT 1
+            """,
+            (prn,)
+        )
+
+        student = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        if not student:
+            return jsonify({
+                "success": False,
+                "message": "Student not found."
+            }), 404
+
+        face_folder = str(
+            student["face_folder"] or prn
+        ).strip()
+
+        # Dataset folder
+        dataset_path = os.path.join(
+            os.path.dirname(__file__),
+            "dataset"
+        )
+
+        student_folder = os.path.join(
+            dataset_path,
+            face_folder
+        )
+
+        if not os.path.isdir(student_folder):
+            return jsonify({
+                "success": False,
+                "message": "Student photo folder not found."
+            }), 404
+
+        # Find the student's saved image
+        allowed_extensions = {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp"
+        }
+
+        image_filename = None
+
+        for filename in os.listdir(student_folder):
+
+            file_path = os.path.join(
+                student_folder,
+                filename
+            )
+
+            if not os.path.isfile(file_path):
+                continue
+
+            extension = os.path.splitext(
+                filename
+            )[1].lower()
+
+            if extension in allowed_extensions:
+                image_filename = filename
+                break
+
+        if not image_filename:
+            return jsonify({
+                "success": False,
+                "message": "Student photo not found."
+            }), 404
+
+        return send_from_directory(
+            student_folder,
+            image_filename
+        )
+
+    except Exception as e:
+        print(
+            "STUDENT PHOTO ERROR:",
+            str(e)
+        )
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
 @app.route("/student/attendance/<prn>", methods=["GET"])
 def student_attendance(prn):
     try:
@@ -1104,133 +2269,91 @@ def attendance_by_session(session_id):
                 })
             else:
                 final_list.append({
-
                     "prn":
                         prn,
-
                     "student_name":
                         student["full_name"],
-
                     "status":
                         "Absent",
-
                     "attendance_time":
                         "-"
-
                 })
-
         cursor.close()
         conn.close()
-
         cursor = None
         conn = None
-
         present_count = sum(
             1
             for student in final_list
             if student["status"] == "Present"
         )
-
         absent_count = sum(
             1
             for student in final_list
             if student["status"] == "Absent"
         )
-
         return jsonify({
-
             "success": True,
-
             "session": {
-
                 "session_id":
                     session["session_id"],
-
                 "teacher_id":
                     session["teacher_id"],
-
                 "subject":
                     session["subject"],
-
                 "department":
                     session["department"],
-
                 "year":
                     session["year"],
-
                 "lecture_date":
                     str(
                         session["lecture_date"]
                     )
                     if session["lecture_date"]
                     else "",
-
                 "start_time":
                     str(
                         session["start_time"]
                     )
                     if session["start_time"]
                     else "",
-
                 "end_time":
                     str(
                         session["end_time"]
                     )
                     if session["end_time"]
                     else "",
-
                 "status":
                     session["status"]
-
             },
-
             "summary": {
-
                 "total":
                     len(final_list),
-
                 "present":
                     present_count,
-
                 "absent":
                     absent_count
-
             },
-
             "students":
                 final_list
-
         }), 200
-
-
     except Exception as e:
-
         print(
             "ATTENDANCE BY SESSION ERROR:",
             str(e)
         )
-
         try:
-
             if cursor:
                 cursor.close()
-
             if conn:
                 conn.close()
-
         except Exception:
             pass
-
-
         return jsonify({
-
             "success": False,
-
             "message":
                 str(e)
-
         }), 500
-
 @app.route(
     "/teacher/attendance/mark-present",
     methods=["POST"]
@@ -1238,63 +2361,47 @@ def attendance_by_session(session_id):
 def teacher_mark_present():
     conn = None
     cursor = None
-
     try:
         data = request.get_json()
-
         if not data:
             return jsonify({
                 "success": False,
                 "message": "No attendance data received."
             }), 400
-
         teacher_id = str(
             data.get("teacher_id", "")
         ).strip()
-
         session_id = str(
             data.get("session_id", "")
         ).strip()
-
         prn = str(
             data.get("prn", "")
         ).strip()
-
         if not teacher_id:
             return jsonify({
                 "success": False,
                 "message": "Teacher ID is required."
             }), 400
-
         if not session_id:
             return jsonify({
                 "success": False,
                 "message": "Session ID is required."
             }), 400
-
         if not prn:
             return jsonify({
                 "success": False,
                 "message": "PRN is required."
             }), 400
-
         print("============================================")
         print("FACULTY MANUAL ATTENDANCE CORRECTION")
         print("Teacher ID:", teacher_id)
         print("Session ID:", session_id)
         print("PRN:", prn)
         print("============================================")
-
         conn = get_db_connection()
-
         cursor = conn.cursor(
             dictionary=True
         )
-
-        # ----------------------------------------------------
-        # Get teacher
-        # ----------------------------------------------------
-
         cursor.execute(
             """
             SELECT
@@ -1306,19 +2413,12 @@ def teacher_mark_present():
             """,
             (teacher_id,)
         )
-
         teacher = cursor.fetchone()
-
         if not teacher:
             return jsonify({
                 "success": False,
                 "message": "Teacher not found."
             }), 404
-
-        # ----------------------------------------------------
-        # Get session
-        # ----------------------------------------------------
-
         cursor.execute(
             """
             SELECT
@@ -1337,65 +2437,42 @@ def teacher_mark_present():
             """,
             (session_id,)
         )
-
         session = cursor.fetchone()
-
         if not session:
             return jsonify({
                 "success": False,
                 "message": "Attendance session not found."
             }), 404
-
-        # ----------------------------------------------------
-        # IMPORTANT:
-        # Make sure this teacher owns this session.
-        #
-        # We also support old Firebase UID sessions.
-        # ----------------------------------------------------
-
         allowed_teacher_ids = [
             str(teacher_id).strip()
         ]
-
         try:
             teacher_email = str(
                 teacher.get("email", "")
             ).strip().lower()
-
             if teacher_email:
                 firebase_user = auth.get_user_by_email(
                     teacher_email
                 )
-
                 firebase_uid = firebase_user.uid
-
                 if firebase_uid not in allowed_teacher_ids:
                     allowed_teacher_ids.append(
                         firebase_uid
                     )
-
         except Exception as firebase_error:
-
             print(
                 "Firebase teacher lookup skipped:",
                 firebase_error
             )
-
         session_teacher_id = str(
             session["teacher_id"]
         ).strip()
-
         if session_teacher_id not in allowed_teacher_ids:
             return jsonify({
                 "success": False,
                 "message":
                     "You are not authorized to modify this attendance session."
             }), 403
-
-        # ----------------------------------------------------
-        # Get student
-        # ----------------------------------------------------
-
         cursor.execute(
             """
             SELECT
@@ -1409,19 +2486,12 @@ def teacher_mark_present():
             """,
             (prn,)
         )
-
         student = cursor.fetchone()
-
         if not student:
             return jsonify({
                 "success": False,
                 "message": "Student not found."
             }), 404
-
-        # ----------------------------------------------------
-        # Verify student belongs to this session's class
-        # ----------------------------------------------------
-
         if (
             str(student["branch"]).strip()
             != str(session["department"]).strip()
@@ -1431,7 +2501,6 @@ def teacher_mark_present():
                 "message":
                     "Student does not belong to this department."
             }), 403
-
         if (
             str(student["year"]).strip()
             != str(session["year"]).strip()
@@ -1441,11 +2510,6 @@ def teacher_mark_present():
                 "message":
                     "Student does not belong to this class."
             }), 403
-
-        # ----------------------------------------------------
-        # Check existing attendance
-        # ----------------------------------------------------
-
         cursor.execute(
             """
             SELECT
@@ -1462,15 +2526,8 @@ def teacher_mark_present():
                 prn
             )
         )
-
         existing = cursor.fetchone()
-
-        # ----------------------------------------------------
-        # Already present
-        # ----------------------------------------------------
-
         if existing:
-
             if existing["status"] == "Present":
                 return jsonify({
                     "success": True,
@@ -1480,11 +2537,6 @@ def teacher_mark_present():
                     "prn": prn,
                     "name": student["full_name"]
                 }), 200
-
-            # ------------------------------------------------
-            # If an Absent row exists, update it.
-            # ------------------------------------------------
-
             cursor.execute(
                 """
                 UPDATE attendance
@@ -1501,16 +2553,7 @@ def teacher_mark_present():
                     existing["attendance_id"]
                 )
             )
-
         else:
-
-            # ------------------------------------------------
-            # Normal case:
-            # Absent means no attendance row exists.
-            #
-            # Create a Present record.
-            # ------------------------------------------------
-
             cursor.execute(
                 """
                 INSERT INTO attendance
@@ -1554,9 +2597,7 @@ def teacher_mark_present():
                     session["lecture_date"]
                 )
             )
-
         conn.commit()
-
         print("MANUAL ATTENDANCE UPDATED SUCCESSFULLY")
         print("PRN:", prn)
         print("Student:", student["full_name"])
@@ -1570,13 +2611,398 @@ def teacher_mark_present():
             "name": student["full_name"],
             "session_id": session_id
         }), 200
-
     except Exception as e:
-
         print(
             "MANUAL ATTENDANCE ERROR:",
             str(e)
         )
+        try:
+            if conn:
+                conn.rollback()
+        except Exception:
+            pass
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+    finally:
+        try:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+        
+@app.route(
+    "/teacher/attendance/apply-leave",
+    methods=["POST"]
+)
+def apply_student_leave():
+
+    conn = None
+    cursor = None
+
+    try:
+
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                "success": False,
+                "message": "No leave data received."
+            }), 400
+
+        teacher_id = str(
+            data.get("teacher_id", "")
+        ).strip()
+
+        session_id = str(
+            data.get("session_id", "")
+        ).strip()
+
+        prn = str(
+            data.get("prn", "")
+        ).strip()
+
+        leave_type = str(
+            data.get("leave_type", "")
+        ).strip()
+
+        leave_comment = str(
+            data.get("leave_comment", "")
+        ).strip()
+
+        # -----------------------------------------
+        # VALIDATION
+        # -----------------------------------------
+
+        if not teacher_id:
+            return jsonify({
+                "success": False,
+                "message": "Teacher ID is required."
+            }), 400
+
+        if not session_id:
+            return jsonify({
+                "success": False,
+                "message": "Session ID is required."
+            }), 400
+
+        if not prn:
+            return jsonify({
+                "success": False,
+                "message": "Student PRN is required."
+            }), 400
+
+        if not leave_type:
+            return jsonify({
+                "success": False,
+                "message": "Leave type is required."
+            }), 400
+
+        if not leave_comment:
+            return jsonify({
+                "success": False,
+                "message":
+                    "Faculty verification comment is required."
+            }), 400
+
+        print("============================================")
+        print("FACULTY STUDENT LEAVE REQUEST")
+        print("Teacher ID:", teacher_id)
+        print("Session ID:", session_id)
+        print("Student PRN:", prn)
+        print("Leave Type:", leave_type)
+        print("============================================")
+
+        # -----------------------------------------
+        # DATABASE CONNECTION
+        # -----------------------------------------
+
+        conn = get_db_connection()
+
+        cursor = conn.cursor(
+            dictionary=True
+        )
+
+        # -----------------------------------------
+        # VERIFY TEACHER
+        # -----------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                teacher_id,
+                full_name,
+                email
+            FROM teachers
+            WHERE teacher_id = %s
+            LIMIT 1
+            """,
+            (teacher_id,)
+        )
+
+        teacher = cursor.fetchone()
+
+        if not teacher:
+
+            return jsonify({
+                "success": False,
+                "message": "Teacher not found."
+            }), 404
+
+        # -----------------------------------------
+        # VERIFY SESSION
+        # -----------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                session_id,
+                teacher_id,
+                subject,
+                department,
+                year,
+                lecture_date,
+                status
+            FROM attendance_sessions
+            WHERE session_id = %s
+            LIMIT 1
+            """,
+            (session_id,)
+        )
+
+        session = cursor.fetchone()
+
+        if not session:
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "Attendance session not found."
+            }), 404
+
+        # -----------------------------------------
+        # VERIFY TEACHER OWNS SESSION
+        # -----------------------------------------
+
+        if str(
+            session["teacher_id"]
+        ).strip() != teacher_id:
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "You are not authorized to modify this attendance session."
+            }), 403
+
+        # -----------------------------------------
+        # VERIFY STUDENT
+        # -----------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                prn,
+                full_name,
+                branch,
+                year
+            FROM students
+            WHERE prn = %s
+            LIMIT 1
+            """,
+            (prn,)
+        )
+
+        student = cursor.fetchone()
+
+        if not student:
+
+            return jsonify({
+                "success": False,
+                "message": "Student not found."
+            }), 404
+
+        # -----------------------------------------
+        # VERIFY STUDENT BELONGS TO CLASS
+        # -----------------------------------------
+
+        if (
+            str(student["branch"]).strip()
+            != str(session["department"]).strip()
+        ):
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "Student does not belong to this department."
+            }), 403
+
+        if (
+            str(student["year"]).strip()
+            != str(session["year"]).strip()
+        ):
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "Student does not belong to this class."
+            }), 403
+
+        # -----------------------------------------
+        # FIND EXISTING ATTENDANCE RECORD
+        # -----------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                attendance_id,
+                status,
+                attendance_time
+            FROM attendance
+            WHERE session_id = %s
+              AND TRIM(prn) = %s
+            LIMIT 1
+            """,
+            (
+                session_id,
+                prn
+            )
+        )
+
+        attendance = cursor.fetchone()
+
+        # -----------------------------------------
+        # IMPORTANT:
+        # ABSENT STUDENTS CURRENTLY DO NOT HAVE
+        # ATTENDANCE ROWS IN YOUR DATABASE.
+        #
+        # Therefore, if no row exists, CREATE
+        # an Absent record first.
+        # -----------------------------------------
+
+        if not attendance:
+
+            cursor.execute(
+                """
+                INSERT INTO attendance
+                (
+                    session_id,
+                    teacher_id,
+                    student_name,
+                    teacher_name,
+                    prn,
+                    department,
+                    year,
+                    subject,
+                    attendance_date,
+                    attendance_time,
+                    status
+                )
+                VALUES
+                (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    NULL,
+                    'Absent'
+                )
+                """,
+                (
+                    session_id,
+                    session["teacher_id"],
+                    student["full_name"],
+                    teacher["full_name"],
+                    prn,
+                    session["department"],
+                    session["year"],
+                    session["subject"],
+                    session["lecture_date"]
+                )
+            )
+
+            attendance_id = cursor.lastrowid
+
+            current_status = "Absent"
+
+        else:
+
+            attendance_id = attendance["attendance_id"]
+
+            current_status = attendance["status"]
+
+        # -----------------------------------------
+        # ONLY ABSENT CAN GET LEAVE
+        # -----------------------------------------
+
+        if current_status != "Absent":
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "Leave can only be applied to an absent student."
+            }), 400
+
+        # -----------------------------------------
+        # APPLY LEAVE
+        # -----------------------------------------
+
+        cursor.execute(
+            """
+            UPDATE attendance
+            SET
+                status = 'Leave',
+                leave_type = %s,
+                leave_comment = %s,
+                leave_verified = 1,
+                leave_marked_by = %s,
+                leave_marked_at = NOW()
+            WHERE attendance_id = %s
+            """,
+            (
+                leave_type,
+                leave_comment,
+                teacher_id,
+                attendance_id
+            )
+        )
+
+        conn.commit()
+
+        print("============================================")
+        print("STUDENT LEAVE APPLIED SUCCESSFULLY")
+        print("Teacher ID:", teacher_id)
+        print("Student PRN:", prn)
+        print("Student:", student["full_name"])
+        print("Session ID:", session_id)
+        print("Leave Type:", leave_type)
+        print("Verified: YES")
+        print("============================================")
+
+        return jsonify({
+            "success": True,
+            "message":
+                f"{student['full_name']} marked on {leave_type} successfully.",
+            "prn": prn,
+            "student_name": student["full_name"],
+            "leave_type": leave_type,
+            "leave_comment": leave_comment,
+            "status": "Leave"
+        }), 200
+
+    except Exception as e:
+
+        print("============================================")
+        print("APPLY LEAVE ERROR")
+        print(str(e))
+        print("============================================")
 
         try:
             if conn:
@@ -1592,6 +3018,7 @@ def teacher_mark_present():
     finally:
 
         try:
+
             if cursor:
                 cursor.close()
 
@@ -1601,39 +3028,28 @@ def teacher_mark_present():
         except Exception:
             pass
 
-
 @app.route(
     "/teacher/attendance",
     methods=["GET"]
 )
 def teacher_attendance():
-
     department = request.args.get(
         "department"
     )
-
     year = request.args.get(
         "year"
     )
-
     subject = request.args.get(
         "subject"
     )
-
     date = request.args.get(
         "date"
     )
-
-
     try:
-
         conn = get_db_connection()
-
         cursor = conn.cursor(
             dictionary=True
         )
-
-
         cursor.execute(
             """
             SELECT
@@ -1655,71 +3071,44 @@ def teacher_attendance():
                 date
             )
         )
-
-
         students = cursor.fetchall()
-
-
         for row in students:
-
             if row["attendance_time"]:
-
                 row["attendance_time"] = str(
                     row["attendance_time"]
                 )
-
-
         cursor.close()
         conn.close()
-
-
         return jsonify({
-
             "success": True,
-
             "students":
                 students
-
         })
-
-
     except Exception as e:
-
         return jsonify({
-
             "success": False,
-
             "message":
                 str(e)
-
         }), 500
-
 @app.route(
     "/teacher/sessions/<teacher_id>",
     methods=["GET"]
 )
 def teacher_sessions(teacher_id):
-
     conn = None
     cursor = None
-
     try:
-
         teacher_id = str(
             teacher_id
         ).strip()
-
         print("============================================")
         print("TEACHER SESSIONS REQUEST")
         print("Teacher ID:", teacher_id)
         print("============================================")
-
         conn = get_db_connection()
-
         cursor = conn.cursor(
             dictionary=True
         )
-
         cursor.execute(
             """
             SELECT
@@ -1733,59 +3122,38 @@ def teacher_sessions(teacher_id):
             """,
             (teacher_id,)
         )
-
         teacher = cursor.fetchone()
-
-
         if not teacher:
-
             print(
                 "TEACHER NOT FOUND:",
                 teacher_id
             )
-
             return jsonify({
-
                 "success": False,
-
                 "message":
                     "Teacher not found."
-
             }), 404
-
-
         print("Teacher found:")
         print(teacher)
-
-
         teacher_email = str(
             teacher["email"]
         ).strip().lower()
-
         firebase_uid = None
-
         try:
-
             firebase_user = auth.get_user_by_email(
                 teacher_email
             )
-
             firebase_uid = firebase_user.uid
-
             print(
                 "Firebase UID:",
                 firebase_uid
             )
-
         except Exception as firebase_error:
-
             print(
                 "Could not find Firebase user:",
                 firebase_error
             )
-
         if firebase_uid:
-
             cursor.execute(
                 """
                 SELECT
@@ -1810,9 +3178,7 @@ def teacher_sessions(teacher_id):
                     firebase_uid
                 )
             )
-
         else:
-
             cursor.execute(
                 """
                 SELECT
@@ -1833,149 +3199,100 @@ def teacher_sessions(teacher_id):
                 """,
                 (teacher_id,)
             )
-
-
         sessions = cursor.fetchall()
-
-
         print(
             "Total sessions found:",
             len(sessions)
         )
-
         for session in sessions:
-
             if session["lecture_date"]:
-
                 session["lecture_date"] = str(
                     session["lecture_date"]
                 )
-
-
             if session["start_time"]:
-
                 session["start_time"] = str(
                     session["start_time"]
                 )
-
-
             if session["end_time"]:
-
                 session["end_time"] = str(
                     session["end_time"]
                 )
-
         cursor.close()
         conn.close()
-
         cursor = None
         conn = None
-
-
         return jsonify({
-
             "success": True,
-
             "teacher_id":
                 teacher_id,
-
             "sessions":
                 sessions
-
         }), 200
-
-
     except Exception as e:
-
         print(
             "TEACHER SESSIONS ERROR:",
             str(e)
         )
-
-
         try:
-
             if cursor:
                 cursor.close()
-
             if conn:
                 conn.close()
-
         except Exception:
             pass
-
-
         return jsonify({
-
             "success": False,
-
             "message":
                 str(e)
-
         }), 500
-
-
 @app.route(
     "/verify-face",
     methods=["POST"]
 )
 def verify_face_api():
-
     try:
-
         prn = request.form.get("prn")
         session_id = request.form.get("session_id")
-
         if not prn:
             return jsonify({
                 "success": False,
                 "verified": False,
                 "message": "PRN is required."
             }), 400
-
         if not session_id:
             return jsonify({
                 "success": False,
                 "verified": False,
                 "message": "Session ID is required."
             }), 400
-
         if "image" not in request.files:
             return jsonify({
                 "success": False,
                 "verified": False,
                 "message": "Face image is required."
             }), 400
-
         image_file = request.files["image"]
-
         image_bytes = image_file.read()
-
         image_array = np.frombuffer(
             image_bytes,
             np.uint8
         )
-
         image = cv2.imdecode(
             image_array,
             cv2.IMREAD_COLOR
         )
-
         if image is None:
             return jsonify({
                 "success": False,
                 "verified": False,
                 "message": "Invalid image."
             }), 400
-
         result = verify_face(
             image,
             prn,
             session_id
         )
-
         if not result.get("verified"):
-
             return jsonify({
                 "success": False,
                 "verified": False,
@@ -1984,94 +3301,63 @@ def verify_face_api():
                     "Face verification failed."
                 )
             }), 401
-
         return jsonify({
-
             "success": True,
-
             "verified": True,
-
             "prn":
                 result.get("prn"),
-
             "name":
                 result.get("name"),
-
             "message":
                 "Face verified successfully."
-
         }), 200
-
     except Exception as e:
-
         print(
             "VERIFY FACE ERROR:",
             str(e)
         )
-
         return jsonify({
-
             "success": False,
-
             "verified": False,
-
             "message":
                 str(e)
-
         }), 500
-
 @app.route(
     "/attendance/mark",
     methods=["POST"]
 )
 def attendance_mark():
-
     conn = None
     cursor = None
-
     try:
-
         data = request.get_json()
-
         if not data:
-
             return jsonify({
                 "success": False,
                 "message": "No attendance data received."
             }), 400
-
-
         prn = str(
             data.get("prn", "")
         ).strip()
-
         session_id = str(
             data.get("session_id", "")
         ).strip()
-
         if not prn:
-
             return jsonify({
                 "success": False,
                 "message": "PRN is required."
             }), 400
-
         if not session_id:
-
             return jsonify({
                 "success": False,
                 "message": "Session ID is required."
             }), 400
-
-
         print("============================================")
         print("MARK ATTENDANCE")
         print("PRN:", prn)
         print("Session ID:", session_id)
         print("============================================")
-
         conn = get_db_connection()
-
         cursor = conn.cursor(
             dictionary=True
         )
@@ -2088,17 +3374,12 @@ def attendance_mark():
             """,
             (prn,)
         )
-
         student = cursor.fetchone()
-
-
         if not student:
-
             return jsonify({
                 "success": False,
                 "message": "Student not found."
             }), 404
-
         cursor.execute(
             """
             SELECT
@@ -2115,45 +3396,34 @@ def attendance_mark():
             """,
             (session_id,)
         )
-
         session = cursor.fetchone()
-
-
         if not session:
-
             return jsonify({
                 "success": False,
                 "message": "Attendance session not found."
             }), 404
-
         if session["status"] != "ACTIVE":
 
             return jsonify({
                 "success": False,
                 "message": "Attendance session is no longer active."
             }), 400
-
         if (
             str(student["branch"]).strip()
             != str(session["department"]).strip()
         ):
-
             return jsonify({
                 "success": False,
                 "message": "Student does not belong to this department."
             }), 403
-
-
         if (
             str(student["year"]).strip()
             != str(session["year"]).strip()
         ):
-
             return jsonify({
                 "success": False,
                 "message": "Student does not belong to this class."
             }), 403
-
         cursor.execute(
             """
             SELECT
@@ -2168,29 +3438,18 @@ def attendance_mark():
                 prn
             )
         )
-
         existing = cursor.fetchone()
-
-
         if existing:
-
             return jsonify({
-
                 "success": True,
-
                 "message":
                     "Attendance already marked.",
-
                 "already_marked": True,
-
                 "prn":
                     prn,
-
                 "name":
                     student["full_name"]
-
             }), 200
-
         cursor.execute(
             """
             INSERT INTO attendance
@@ -2234,80 +3493,51 @@ def attendance_mark():
                 session["lecture_date"]
             )
         )
-
-
         conn.commit()
-
         print("ATTENDANCE MARKED SUCCESSFULLY")
         print("PRN:", prn)
         print("Name:", student["full_name"])
-
-
         return jsonify({
-
             "success": True,
-
             "message":
                 "Attendance marked successfully.",
-
             "already_marked":
                 False,
-
             "prn":
                 prn,
-
             "name":
                 student["full_name"],
-
             "session_id":
                 session_id
-
         }), 201
-
-
     except Exception as e:
-
         print(
             "ATTENDANCE MARK ERROR:",
             str(e)
         )
-
-
         try:
-
             if conn:
                 conn.rollback()
-
         except Exception:
             pass
-
-
         return jsonify({
-
             "success": False,
-
             "message":
                 str(e)
-
         }), 500
-
-
     finally:
-
         try:
-
             if cursor:
                 cursor.close()
-
             if conn:
                 conn.close()
-
         except Exception:
             pass
 
-# ============================================================
-# MONTHLY ATTENDANCE EXCEL
-# ============================================================
+# =========================================================
+# TEACHER MONTHLY ATTENDANCE REPORT
+# SUBJECT-WISE + ALL SUBJECTS
+# =========================================================
 
 @app.route(
     "/teacher/monthly-attendance/<teacher_id>/excel",
@@ -2322,24 +3552,44 @@ def monthly_attendance_excel(teacher_id):
             ""
         ).strip()
 
+        subject = request.args.get(
+            "subject",
+            "ALL"
+        ).strip()
+
+        threshold = request.args.get(
+            "threshold",
+            "75"
+        ).strip()
+
+        try:
+            threshold = float(threshold)
+        except ValueError:
+            return jsonify({
+                "success": False,
+                "message": "Threshold must be a number between 0 and 100."
+            }), 400
+
+        if threshold < 0 or threshold > 100:
+            return jsonify({
+                "success": False,
+                "message": "Threshold must be between 0 and 100."
+            }), 400
 
         if not month:
 
             return jsonify({
                 "success": False,
-                "message": "Month is required. Example: 2026-09"
+                "message":
+                    "Month is required. Example: 2026-09"
             }), 400
-
 
         teacher, report = get_monthly_attendance_data(
             teacher_id,
-            month
+            month,
+            subject,
+            threshold
         )
-
-
-        # ----------------------------------------------------
-        # Create Excel workbook
-        # ----------------------------------------------------
 
         workbook = Workbook()
 
@@ -2347,18 +3597,29 @@ def monthly_attendance_excel(teacher_id):
 
         worksheet.title = "Monthly Attendance"
 
-
-        # ----------------------------------------------------
-        # Title
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # TITLE
+        # -------------------------------------------------
 
         worksheet.merge_cells(
             "A1:H1"
         )
 
-        worksheet["A1"] = (
-            f"Monthly Attendance Report - {month}"
-        )
+        if subject and subject.upper() != "ALL":
+
+            title = (
+                f"Monthly Attendance Report - "
+                f"{subject} - {month}"
+            )
+
+        else:
+
+            title = (
+                f"Monthly Attendance Report - "
+                f"All Subjects - {month}"
+            )
+
+        worksheet["A1"] = title
 
         worksheet["A1"].font = Font(
             bold=True,
@@ -2369,6 +3630,9 @@ def monthly_attendance_excel(teacher_id):
             horizontal="center"
         )
 
+        # -------------------------------------------------
+        # TEACHER
+        # -------------------------------------------------
 
         worksheet.merge_cells(
             "A2:H2"
@@ -2382,10 +3646,30 @@ def monthly_attendance_excel(teacher_id):
             bold=True
         )
 
+        # -------------------------------------------------
+        # SUBJECT
+        # -------------------------------------------------
 
-        # ----------------------------------------------------
-        # Headers
-        # ----------------------------------------------------
+        worksheet.merge_cells(
+            "A3:H3"
+        )
+
+        worksheet["A3"] = (
+            "Subject: "
+            + (
+                subject
+                if subject and subject.upper() != "ALL"
+                else "All Subjects"
+            )
+        )
+
+        worksheet["A3"].font = Font(
+            bold=True
+        )
+
+        # -------------------------------------------------
+        # HEADERS
+        # -------------------------------------------------
 
         headers = [
             "PRN",
@@ -2398,9 +3682,7 @@ def monthly_attendance_excel(teacher_id):
             "Attendance %"
         ]
 
-
-        header_row = 4
-
+        header_row = 5
 
         for column, header in enumerate(
             headers,
@@ -2422,14 +3704,13 @@ def monthly_attendance_excel(teacher_id):
                 horizontal="center"
             )
 
-
-        # ----------------------------------------------------
-        # Data
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # DATA
+        # -------------------------------------------------
 
         for row_index, student in enumerate(
             report,
-            start=5
+            start=6
         ):
 
             worksheet.cell(
@@ -2480,10 +3761,28 @@ def monthly_attendance_excel(teacher_id):
                 value=f"{student['percentage']}%"
             )
 
+        # -------------------------------------------------
+        # NO DATA
+        # -------------------------------------------------
 
-        # ----------------------------------------------------
-        # Auto column width
-        # ----------------------------------------------------
+        if not report:
+
+            worksheet.merge_cells(
+                "A6:H6"
+            )
+
+            worksheet["A6"] = (
+                "No attendance records found "
+                "for the selected month and subject."
+            )
+
+            worksheet["A6"].alignment = Alignment(
+                horizontal="center"
+            )
+
+        # -------------------------------------------------
+        # COLUMN WIDTH
+        # -------------------------------------------------
 
         for column_cells in worksheet.columns:
 
@@ -2492,7 +3791,6 @@ def monthly_attendance_excel(teacher_id):
             column_letter = get_column_letter(
                 column_cells[0].column
             )
-
 
             for cell in column_cells:
 
@@ -2503,7 +3801,6 @@ def monthly_attendance_excel(teacher_id):
                         len(str(cell.value))
                     )
 
-
             worksheet.column_dimensions[
                 column_letter
             ].width = min(
@@ -2511,47 +3808,46 @@ def monthly_attendance_excel(teacher_id):
                 35
             )
 
+        worksheet.freeze_panes = "A6"
 
-        # ----------------------------------------------------
-        # Freeze header
-        # ----------------------------------------------------
-
-        worksheet.freeze_panes = "A5"
-
-
-        # ----------------------------------------------------
-        # Create response
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # CREATE FILE
+        # -------------------------------------------------
 
         output = BytesIO()
 
-        workbook.save(output)
+        workbook.save(
+            output
+        )
 
         output.seek(0)
 
-
-        filename = (
-            f"Monthly_Attendance_{month}.xlsx"
+        safe_subject = (
+            "All_Subjects"
+            if not subject
+            or subject.upper() == "ALL"
+            else "".join(
+                c if c.isalnum() or c in (" ", "_", "-")
+                else "_"
+                for c in subject
+            ).replace(" ", "_")
         )
 
-
-        from flask import send_file
-
+        filename = (
+            f"Monthly_Attendance_"
+            f"{safe_subject}_"
+            f"{month}.xlsx"
+        )
 
         return send_file(
-
             output,
-
             as_attachment=True,
-
             download_name=filename,
-
             mimetype=(
                 "application/vnd.openxmlformats-officedocument."
                 "spreadsheetml.sheet"
             )
         )
-
 
     except Exception as e:
 
@@ -2560,19 +3856,16 @@ def monthly_attendance_excel(teacher_id):
             str(e)
         )
 
-
         return jsonify({
-
             "success": False,
-
-            "message":
-                str(e)
-
+            "message": str(e)
         }), 500
 
-# ============================================================
-# MONTHLY DEFAULTER EXCEL
-# ============================================================
+
+# =========================================================
+# TEACHER MONTHLY DEFAULTER REPORT
+# SUBJECT-WISE + ALL SUBJECTS
+# =========================================================
 
 @app.route(
     "/teacher/monthly-defaulters/<teacher_id>/excel",
@@ -2587,39 +3880,54 @@ def monthly_defaulters_excel(teacher_id):
             ""
         ).strip()
 
+        subject = request.args.get(
+            "subject",
+            "ALL"
+        ).strip()
+
+        threshold = request.args.get(
+            "threshold",
+            "75"
+        ).strip()
+
+        try:
+            threshold = float(threshold)
+        except ValueError:
+            return jsonify({
+                "success": False,
+                "message": "Threshold must be a number between 0 and 100."
+            }), 400
+
+        if threshold < 0 or threshold > 100:
+            return jsonify({
+                "success": False,
+                "message": "Threshold must be between 0 and 100."
+            }), 400
 
         if not month:
 
             return jsonify({
                 "success": False,
-                "message": "Month is required. Example: 2026-09"
+                "message":
+                    "Month is required. Example: 2026-09"
             }), 400
-
 
         teacher, report = get_monthly_attendance_data(
             teacher_id,
-            month
+            month,
+            subject,
+            threshold
         )
 
-
-        # ----------------------------------------------------
-        # Only students below 75%
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # BELOW 75% = DEFAULTER
+        # -------------------------------------------------
 
         defaulters = [
-
             student
-
             for student in report
-
-            if student["percentage"] < 75
-
+            if student["percentage"] < threshold
         ]
-
-
-        # ----------------------------------------------------
-        # Create workbook
-        # ----------------------------------------------------
 
         workbook = Workbook()
 
@@ -2627,18 +3935,29 @@ def monthly_defaulters_excel(teacher_id):
 
         worksheet.title = "Defaulter List"
 
-
-        # ----------------------------------------------------
-        # Title
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # TITLE
+        # -------------------------------------------------
 
         worksheet.merge_cells(
             "A1:H1"
         )
 
-        worksheet["A1"] = (
-            f"Defaulter Attendance List - {month}"
-        )
+        if subject and subject.upper() != "ALL":
+
+            title = (
+                f"Defaulter Attendance List - "
+                f"{subject} - {month}"
+            )
+
+        else:
+
+            title = (
+                f"Defaulter Attendance List - "
+                f"All Subjects - {month}"
+            )
+
+        worksheet["A1"] = title
 
         worksheet["A1"].font = Font(
             bold=True,
@@ -2649,6 +3968,9 @@ def monthly_defaulters_excel(teacher_id):
             horizontal="center"
         )
 
+        # -------------------------------------------------
+        # TEACHER + THRESHOLD
+        # -------------------------------------------------
 
         worksheet.merge_cells(
             "A2:H2"
@@ -2656,17 +3978,37 @@ def monthly_defaulters_excel(teacher_id):
 
         worksheet["A2"] = (
             f"Teacher: {teacher['full_name']} | "
-            f"Defaulter Threshold: Below 75%"
+            f"Defaulter Threshold: Below {threshold:g}%"
         )
 
         worksheet["A2"].font = Font(
             bold=True
         )
 
+        # -------------------------------------------------
+        # SUBJECT
+        # -------------------------------------------------
 
-        # ----------------------------------------------------
-        # Headers
-        # ----------------------------------------------------
+        worksheet.merge_cells(
+            "A3:H3"
+        )
+
+        worksheet["A3"] = (
+            "Subject: "
+            + (
+                subject
+                if subject and subject.upper() != "ALL"
+                else "All Subjects"
+            )
+        )
+
+        worksheet["A3"].font = Font(
+            bold=True
+        )
+
+        # -------------------------------------------------
+        # HEADERS
+        # -------------------------------------------------
 
         headers = [
             "PRN",
@@ -2679,14 +4021,13 @@ def monthly_defaulters_excel(teacher_id):
             "Attendance %"
         ]
 
-
         for column, header in enumerate(
             headers,
             start=1
         ):
 
             cell = worksheet.cell(
-                row=4,
+                row=5,
                 column=column
             )
 
@@ -2700,14 +4041,13 @@ def monthly_defaulters_excel(teacher_id):
                 horizontal="center"
             )
 
-
-        # ----------------------------------------------------
-        # Defaulter data
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # DATA
+        # -------------------------------------------------
 
         for row_index, student in enumerate(
             defaulters,
-            start=5
+            start=6
         ):
 
             worksheet.cell(
@@ -2758,23 +4098,27 @@ def monthly_defaulters_excel(teacher_id):
                 value=f"{student['percentage']}%"
             )
 
+        # -------------------------------------------------
+        # NO DEFAULTERS
+        # -------------------------------------------------
 
-        # ----------------------------------------------------
-        # If nobody is a defaulter
-        # ----------------------------------------------------
+        if not defaulters:
 
-        if len(defaulters) == 0:
-
-            worksheet.cell(
-                row=5,
-                column=1,
-                value="No defaulters found."
+            worksheet.merge_cells(
+                "A6:H6"
             )
 
+            worksheet["A6"] = (
+                "No defaulters found."
+            )
 
-        # ----------------------------------------------------
-        # Auto column width
-        # ----------------------------------------------------
+            worksheet["A6"].alignment = Alignment(
+                horizontal="center"
+            )
+
+        # -------------------------------------------------
+        # COLUMN WIDTH
+        # -------------------------------------------------
 
         for column_cells in worksheet.columns:
 
@@ -2783,7 +4127,6 @@ def monthly_defaulters_excel(teacher_id):
             column_letter = get_column_letter(
                 column_cells[0].column
             )
-
 
             for cell in column_cells:
 
@@ -2794,7 +4137,6 @@ def monthly_defaulters_excel(teacher_id):
                         len(str(cell.value))
                     )
 
-
             worksheet.column_dimensions[
                 column_letter
             ].width = min(
@@ -2802,43 +4144,46 @@ def monthly_defaulters_excel(teacher_id):
                 35
             )
 
+        worksheet.freeze_panes = "A6"
 
-        worksheet.freeze_panes = "A5"
-
-
-        # ----------------------------------------------------
-        # Send Excel
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # CREATE FILE
+        # -------------------------------------------------
 
         output = BytesIO()
 
-        workbook.save(output)
+        workbook.save(
+            output
+        )
 
         output.seek(0)
 
-
-        filename = (
-            f"Defaulter_Attendance_{month}.xlsx"
+        safe_subject = (
+            "All_Subjects"
+            if not subject
+            or subject.upper() == "ALL"
+            else "".join(
+                c if c.isalnum() or c in (" ", "_", "-")
+                else "_"
+                for c in subject
+            ).replace(" ", "_")
         )
 
-
-        from flask import send_file
-
+        filename = (
+            f"Defaulter_Attendance_"
+            f"{safe_subject}_"
+            f"{month}.xlsx"
+        )
 
         return send_file(
-
             output,
-
             as_attachment=True,
-
             download_name=filename,
-
             mimetype=(
                 "application/vnd.openxmlformats-officedocument."
                 "spreadsheetml.sheet"
             )
         )
-
 
     except Exception as e:
 
@@ -2847,42 +4192,35 @@ def monthly_defaulters_excel(teacher_id):
             str(e)
         )
 
-
         return jsonify({
-
             "success": False,
-
-            "message":
-                str(e)
-
+            "message": str(e)
         }), 500
-    
-    
-# ============================================================
-# MONTHLY ATTENDANCE REPORT HELPER
-# ============================================================
 
-def get_monthly_attendance_data(teacher_id, month):
-    """
-    Get monthly attendance for all students taught by a teacher.
 
-    month format:
-        YYYY-MM
+# =========================================================
+# MONTHLY ATTENDANCE DATA
+# SUBJECT FILTER SUPPORT
+# =========================================================
 
-    Example:
-        2026-09
-    """
+def get_monthly_attendance_data(
+    teacher_id,
+    month,
+    subject="ALL",
+    threshold=75
+):
 
     conn = None
     cursor = None
 
     try:
 
-        # ----------------------------------------------------
-        # Validate month
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # VALIDATE MONTH
+        # -------------------------------------------------
 
         try:
+
             month_date = datetime.strptime(
                 month,
                 "%Y-%m"
@@ -2894,12 +4232,10 @@ def get_monthly_attendance_data(teacher_id, month):
                 "Invalid month format. Use YYYY-MM."
             )
 
+        first_day = month_date.replace(
+            day=1
+        )
 
-        # First day of selected month
-        first_day = month_date.replace(day=1)
-
-
-        # First day of next month
         if first_day.month == 12:
 
             next_month = first_day.replace(
@@ -2913,6 +4249,9 @@ def get_monthly_attendance_data(teacher_id, month):
                 month=first_day.month + 1
             )
 
+        # -------------------------------------------------
+        # DATABASE
+        # -------------------------------------------------
 
         conn = get_db_connection()
 
@@ -2920,10 +4259,9 @@ def get_monthly_attendance_data(teacher_id, month):
             dictionary=True
         )
 
-
-        # ----------------------------------------------------
-        # Get teacher
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # GET TEACHER
+        # -------------------------------------------------
 
         cursor.execute(
             """
@@ -2941,27 +4279,19 @@ def get_monthly_attendance_data(teacher_id, month):
 
         teacher = cursor.fetchone()
 
-
         if not teacher:
 
             raise ValueError(
                 "Teacher not found."
             )
 
-
-        # ----------------------------------------------------
-        # Existing sessions may contain either:
-        #
-        # 1. teacher_id
-        # 2. old Firebase UID
-        #
-        # Support both.
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # SUPPORT TEACHER ID + FIREBASE UID
+        # -------------------------------------------------
 
         teacher_ids = [
             str(teacher_id).strip()
         ]
-
 
         try:
 
@@ -2969,14 +4299,11 @@ def get_monthly_attendance_data(teacher_id, month):
                 teacher["email"]
             ).strip().lower()
 
-
             firebase_user = auth.get_user_by_email(
                 teacher_email
             )
 
-
             firebase_uid = firebase_user.uid
-
 
             if firebase_uid not in teacher_ids:
 
@@ -2991,34 +4318,53 @@ def get_monthly_attendance_data(teacher_id, month):
                 firebase_error
             )
 
+        # -------------------------------------------------
+        # BUILD TEACHER PLACEHOLDERS
+        # -------------------------------------------------
 
-        # ----------------------------------------------------
-        # Build dynamic IN placeholders
-        # ----------------------------------------------------
-
-        placeholders = ",".join(
+        teacher_placeholders = ",".join(
             ["%s"] * len(teacher_ids)
         )
 
+        # -------------------------------------------------
+        # SUBJECT FILTER
+        # -------------------------------------------------
 
-        # ----------------------------------------------------
-        # IMPORTANT:
-        #
-        # A student is counted only for sessions matching
-        # their branch + year.
-        #
-        # Missing attendance record = Absent.
-        # ----------------------------------------------------
+        subject_filter = ""
+
+        params = teacher_ids.copy()
+
+        if (
+            subject
+            and subject.upper() != "ALL"
+        ):
+
+            subject_filter = """
+                AND TRIM(ses.subject) = TRIM(%s)
+            """
+
+            params.append(
+                subject
+            )
+
+        # -------------------------------------------------
+        # DATE FILTER
+        # -------------------------------------------------
+
+        params.extend([
+            first_day,
+            next_month
+        ])
+
+        # -------------------------------------------------
+        # MAIN QUERY
+        # -------------------------------------------------
 
         query = f"""
             SELECT
-
                 s.prn,
-
                 s.full_name,
-
                 s.branch,
-
                 s.year,
 
                 COUNT(
@@ -3028,6 +4374,7 @@ def get_monthly_attendance_data(teacher_id, month):
                 COUNT(
                     DISTINCT CASE
                         WHEN a.prn IS NOT NULL
+                        AND a.status = 'Present'
                         THEN ses.session_id
                     END
                 ) AS present
@@ -3042,7 +4389,6 @@ def get_monthly_attendance_data(teacher_id, month):
                 AND TRIM(s.year)
                     = TRIM(ses.year)
 
-
             LEFT JOIN attendance a
 
                 ON a.session_id = ses.session_id
@@ -3050,13 +4396,14 @@ def get_monthly_attendance_data(teacher_id, month):
                 AND TRIM(a.prn)
                     = TRIM(s.prn)
 
+            WHERE ses.teacher_id
+                IN ({teacher_placeholders})
 
-            WHERE ses.teacher_id IN ({placeholders})
+                {subject_filter}
 
                 AND ses.lecture_date >= %s
 
                 AND ses.lecture_date < %s
-
 
             GROUP BY
 
@@ -3065,9 +4412,7 @@ def get_monthly_attendance_data(teacher_id, month):
                 s.branch,
                 s.year
 
-
             HAVING total_lectures > 0
-
 
             ORDER BY
 
@@ -3076,31 +4421,18 @@ def get_monthly_attendance_data(teacher_id, month):
                 s.full_name ASC
         """
 
-
-        params = (
-            teacher_ids
-            + [
-                first_day,
-                next_month
-            ]
-        )
-
-
         cursor.execute(
             query,
             params
         )
 
-
         rows = cursor.fetchall()
 
-
-        # ----------------------------------------------------
-        # Calculate absent + percentage
-        # ----------------------------------------------------
+        # -------------------------------------------------
+        # BUILD REPORT
+        # -------------------------------------------------
 
         report = []
-
 
         for row in rows:
 
@@ -3114,9 +4446,7 @@ def get_monthly_attendance_data(teacher_id, month):
 
             absent = total - present
 
-
             percentage = 0
-
 
             if total > 0:
 
@@ -3125,13 +4455,11 @@ def get_monthly_attendance_data(teacher_id, month):
                     2
                 )
 
-
             status = (
                 "Defaulter"
-                if percentage < 75
+                if percentage < threshold
                 else "Regular"
             )
-
 
             report.append({
 
@@ -3163,9 +4491,7 @@ def get_monthly_attendance_data(teacher_id, month):
                     status
             })
 
-
         return teacher, report
-
 
     finally:
 
@@ -3179,8 +4505,7 @@ def get_monthly_attendance_data(teacher_id, month):
 
         except Exception:
             pass
-
-
+        
 if __name__ == "__main__":
 
     app.run(
