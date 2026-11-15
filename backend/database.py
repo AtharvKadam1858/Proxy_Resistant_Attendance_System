@@ -4,19 +4,12 @@ from typing import Any, Dict, List, Optional
 
 # Check available drivers
 HAS_PSYCOPG2 = False
-HAS_PG8000 = False
 HAS_MYSQL = False
 
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
     HAS_PSYCOPG2 = True
-except ImportError:
-    pass
-
-try:
-    import pg8000.native
-    HAS_PG8000 = True
 except ImportError:
     pass
 
@@ -33,9 +26,7 @@ class PostgresDictCursorWrapper:
         self._cursor = cursor
 
     def execute(self, query: str, params: Any = None):
-        # Convert %s placeholders and any MySQL-specific syntax to standard Postgres
         sql = query.strip()
-        # In Postgres, NOW() and CURRENT_TIMESTAMP both work
         if params is not None:
             return self._cursor.execute(sql, params)
         return self._cursor.execute(sql)
@@ -99,7 +90,6 @@ def get_db_connection():
     db_url = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
     
     if db_url:
-        # PostgreSQL / Supabase connection
         if HAS_PSYCOPG2:
             conn = psycopg2.connect(db_url, sslmode="require")
             return PostgresConnectionWrapper(conn)
@@ -109,11 +99,11 @@ def get_db_connection():
                 "Install with: pip install psycopg2-binary"
             )
 
-    # Individual Supabase / Postgres environment variables
-    pg_host = os.environ.get("SUPABASE_DB_HOST") or os.environ.get("PGHOST")
-    if pg_host:
+    # Supabase direct connection defaults
+    pg_host = os.environ.get("SUPABASE_DB_HOST") or os.environ.get("PGHOST", "db.ccvuqarrkinazzyxbxqg.supabase.co")
+    pg_password = os.environ.get("SUPABASE_DB_PASSWORD") or os.environ.get("PGPASSWORD")
+    if pg_host and pg_password:
         pg_user = os.environ.get("SUPABASE_DB_USER") or os.environ.get("PGUSER", "postgres")
-        pg_password = os.environ.get("SUPABASE_DB_PASSWORD") or os.environ.get("PGPASSWORD", "")
         pg_database = os.environ.get("SUPABASE_DB_NAME") or os.environ.get("PGDATABASE", "postgres")
         pg_port = int(os.environ.get("SUPABASE_DB_PORT") or os.environ.get("PGPORT", "5432"))
         
@@ -143,6 +133,6 @@ def get_db_connection():
         )
 
     raise RuntimeError(
-        "No database driver or connection configured. "
-        "Please provide DATABASE_URL (for Supabase PostgreSQL) or install mysql-connector-python."
+        "No database connection configured. "
+        "Please provide DATABASE_URL for Supabase PostgreSQL."
     )
