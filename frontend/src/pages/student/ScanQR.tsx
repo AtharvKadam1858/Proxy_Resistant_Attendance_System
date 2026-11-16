@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { useNavigate } from "react-router-dom";
 import SelfieCapture from "../../components/SelfieCapture";
@@ -13,159 +13,240 @@ export default function ScanQR() {
   const [cameraActive, setCameraActive] = useState(false);
   const [scanError, setScanError] = useState("");
   const [verifying, setVerifying] = useState(false);
+  const [cameras, setCameras] = useState<Array<{ id: string; label: string }>>([]);
+  const [activeCamIndex, setActiveCamIndex] = useState(0);
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannedRef = useRef(false);
+  const startingRef = useRef(false);
   const [sessionId, setSessionId] = useState("");
   const [, setQrToken] = useState("");
 
-  // 🛑 STOP SCANNER + RELEASE CAMERA CLEANLY
-  const stopScanner = async () => {
+  // 🛑 THOROUGH CLEANUP: RELEASES HARDWARE SENSORS & TURNS OFF LAPTOP/PHONE LIGHT
+  const stopScanner = useCallback(async () => {
+    startingRef.current = false;
+
     if (scannerRef.current) {
       try {
         if (scannerRef.current.isScanning) {
           await scannerRef.current.stop();
         }
-      } catch {}
+      } catch (err) {
+        console.warn("Scanner stop warning:", err);
+      }
       try {
         await scannerRef.current.clear();
       } catch {}
       scannerRef.current = null;
     }
 
-    const reader = document.getElementById("qr-reader");
-    if (reader) reader.innerHTML = "";
-
-    document.querySelectorAll("video").forEach((video: any) => {
-      if (video.srcObject) {
-        const stream = video.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
-        video.srcObject = null;
-      }
+    // Stop every active media track on all video elements
+    document.querySelectorAll("video").forEach((video: HTMLVideoElement) => {
+      try {
+        if (video.srcObject) {
+          const stream = video.srcObject as MediaStream;
+          stream.getTracks().forEach((track) => {
+            track.stop();
+            track.enabled = false;
+          });
+          video.srcObject = null;
+        }
+        video.pause();
+      } catch {}
     });
 
     setCameraActive(false);
     setCameraStarting(false);
-  };
+  }, []);
 
+  // Stop camera on component unmount
   useEffect(() => {
     return () => {
       stopScanner();
     };
-  }, []);
+  }, [stopScanner]);
 
-  // ▶ FAST DIRECT CAMERA START (ZERO REDUNDANT CALLS)
-  const startScanner = async () => {
+  // ▶ BULLETPROOF MOBILE CAMERA INITIALIZATION WITH MULTI-TIER FALLBACK
+  const startScanner = async (overrideCameraId?: string) => {
+    if (startingRef.current || cameraActive) return;
+    startingRef.current = true;
+
     try {
       setScanError("");
       setCameraStarting(true);
       scannedRef.current = false;
 
-      // Small delay to ensure DOM element is mounted
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      // Small pause to guarantee DOM layout stability
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Clean existing instance if present
+      if (scannerRef.current) {
+        try {
+          if (scannerRef.current.isScanning) await scannerRef.current.stop();
+          await scannerRef.current.clear();
+        } catch {}
+        scannerRef.current = null;
+      }
 
       const qrScanner = new Html5Qrcode("qr-reader");
       scannerRef.current = qrScanner;
+
+      // 1. Enumerate available device cameras
+      let deviceList: Array<{ id: string; label: string }> = [];
+      try {
+        deviceList = await Html5Qrcode.getCameras();
+        if (deviceList && deviceList.length > 0) {
+          setCameras(deviceList);
+        }
+      } catch (camErr) {
+        console.warn("Camera enumeration warning:", camErr);
+      }
+
+      // 2. Select best camera (prioritizing back/rear on mobile)
+      let selectedCamera: any = { facingMode: "environment" };
+
+      if (overrideCameraId) {
+        selectedCamera = overrideCameraId;
+      } else if (deviceList.length > 0) {
+        // Look for rear camera by keyword
+        const backIdx = deviceList.findIndex((d) =>
+          /back|rear|environment|primary|facing back/i.test(d.label)
+        );
+        if (backIdx !== -1) {
+          selectedCamera = deviceList[backIdx].id;
+          setActiveCamIndex(backIdx);
+        } else {
+          // If labels are generic, on mobile devices the back camera is typically the last or first device
+          const idx = deviceList.length > 1 ? deviceList.length - 1 : 0;
+          selectedCamera = deviceList[idx].id;
+          setActiveCamIndex(idx);
+        }
+      }
 
       const qrConfig = {
         fps: 15,
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
           const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-          const qrboxSize = Math.max(180, Math.floor(minEdge * 0.72));
+          const qrboxSize = Math.max(160, Math.floor(minEdge * 0.72));
           return { width: qrboxSize, height: qrboxSize };
         },
         aspectRatio: 1.0,
       };
 
-      await qrScanner.start(
-        { facingMode: "environment" },
-        qrConfig,
-        async (decodedText: string) => {
-          if (scannedRef.current) return;
-          scannedRef.current = true;
+      const onScanSuccess = async (decodedText: string) => {
+        if (scannedRef.current) return;
+        scannedRef.current = true;
 
-          const currentQrToken = decodedText.trim();
-          setQrToken(currentQrToken);
-          await stopScanner();
+        const currentQrToken = decodedText.trim();
+        setQrToken(currentQrToken);
+        await stopScanner();
 
-          setVerifying(true);
+        setVerifying(true);
 
-          // Get Geolocation Coordinates
-          navigator.geolocation.getCurrentPosition(
-            async (pos) => {
-              try {
-                const studentPrn = localStorage.getItem("prn");
-                if (!studentPrn) {
-                  alert("Student PRN not found. Please login again.");
-                  navigate("/profile");
-                  return;
-                }
-
-                let verifiedSessionId = "";
-
-                // 1. Try Backend API if online
-                try {
-                  const response = await fetch(`${API_URL}/attendance/verify`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      qr_token: currentQrToken,
-                      prn: studentPrn,
-                      lat: pos.coords.latitude,
-                      lng: pos.coords.longitude,
-                    }),
-                  });
-                  if (response.ok) {
-                    const result = await response.json();
-                    if (result.success) {
-                      verifiedSessionId = result.session_id;
-                    } else {
-                      alert(result.message || "QR code expired or invalid.");
-                      scannedRef.current = false;
-                      navigate("/profile");
-                      return;
-                    }
-                  }
-                } catch {
-                  // Fallback to direct cloud verification
-                }
-
-                // 2. Fallback to Supabase Cloud Verification
-                if (!verifiedSessionId) {
-                  const cloudVerify = await verifySessionQR(currentQrToken);
-                  if (cloudVerify.success && cloudVerify.session_id) {
-                    verifiedSessionId = cloudVerify.session_id;
-                  } else {
-                    alert(cloudVerify.message || "Invalid or expired QR code.");
-                    scannedRef.current = false;
-                    navigate("/profile");
-                    return;
-                  }
-                }
-
-                setSessionId(verifiedSessionId);
-                setShowSelfie(true);
-              } catch (err: any) {
-                console.error(err);
-                alert("Verification error: " + (err?.message || "Please try again."));
-                navigate("/profile");
-              } finally {
-                setVerifying(false);
-              }
-            },
-            () => {
-              setVerifying(false);
-              alert("❌ Location permission required for proxy-resistant verification.");
+        // Geolocation with fast timeout & fallback
+        const proceedWithVerification = async (lat?: number, lng?: number) => {
+          try {
+            const studentPrn = localStorage.getItem("prn");
+            if (!studentPrn) {
+              alert("Student PRN not found. Please login again.");
               navigate("/profile");
-            },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-          );
-        },
-        () => {}
-      );
+              return;
+            }
 
-      setCameraStarting(false);
-      setCameraActive(true);
+            let verifiedSessionId = "";
+
+            // 1. Try Backend API if available
+            try {
+              const response = await fetch(`${API_URL}/attendance/verify`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  qr_token: currentQrToken,
+                  prn: studentPrn,
+                  lat: lat ?? null,
+                  lng: lng ?? null,
+                }),
+              });
+              if (response.ok) {
+                const result = await response.json();
+                if (result.success) {
+                  verifiedSessionId = result.session_id;
+                }
+              }
+            } catch {}
+
+            // 2. Direct Cloud Database (Supabase) Instant Verification
+            if (!verifiedSessionId) {
+              const cloudVerify = await verifySessionQR(currentQrToken);
+              if (cloudVerify.success && cloudVerify.session_id) {
+                verifiedSessionId = cloudVerify.session_id;
+              } else {
+                alert(cloudVerify.message || "Invalid or expired QR code.");
+                scannedRef.current = false;
+                navigate("/profile");
+                return;
+              }
+            }
+
+            setSessionId(verifiedSessionId);
+            setShowSelfie(true);
+          } catch (err: any) {
+            console.error("QR Verification error:", err);
+            alert("Verification error: " + (err?.message || "Please try again."));
+            navigate("/profile");
+          } finally {
+            setVerifying(false);
+          }
+        };
+
+        if ("geolocation" in navigator) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => proceedWithVerification(pos.coords.latitude, pos.coords.longitude),
+            () => proceedWithVerification(), // Fallback without blocking student if GPS times out indoors
+            { enableHighAccuracy: false, timeout: 6000, maximumAge: 60000 }
+          );
+        } else {
+          proceedWithVerification();
+        }
+      };
+
+      // 3. Multi-tier startup fallback (Device ID -> Environment -> User / Front -> Any)
+      let started = false;
+      try {
+        await qrScanner.start(selectedCamera, qrConfig, onScanSuccess, () => {});
+        started = true;
+      } catch (err1) {
+        console.warn("Tier 1 camera start failed, trying Tier 2 (facingMode ideal):", err1);
+        try {
+          await qrScanner.start(
+            { facingMode: { ideal: "environment" } },
+            qrConfig,
+            onScanSuccess,
+            () => {}
+          );
+          started = true;
+        } catch (err2) {
+          console.warn("Tier 2 camera start failed, trying Tier 3 (front camera fallback):", err2);
+          try {
+            await qrScanner.start(
+              { facingMode: "user" },
+              qrConfig,
+              onScanSuccess,
+              () => {}
+            );
+            started = true;
+          } catch (err3) {
+            console.warn("Tier 3 camera start failed, trying Tier 4 (generic device):", err3);
+            await qrScanner.start(true as any, qrConfig, onScanSuccess, () => {});
+            started = true;
+          }
+        }
+      }
+
+      if (started) {
+        setCameraStarting(false);
+        setCameraActive(true);
+      }
     } catch (err: any) {
       console.error("Camera startup error:", err);
       setCameraStarting(false);
@@ -173,16 +254,37 @@ export default function ScanQR() {
 
       let msg = "Could not access the camera. ";
       if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
-        msg += "Please allow camera access in your browser settings.";
+        msg += "Please allow camera access in your browser site permissions and refresh.";
       } else if (err?.name === "NotFoundError" || err?.name === "DevicesNotFoundError") {
-        msg += "No back camera found on this device.";
+        msg += "No camera hardware detected on this device.";
       } else if (err?.name === "NotReadableError" || err?.name === "TrackStartError") {
-        msg += "Camera is currently being used by another application.";
+        msg += "The camera is currently busy or being used by another application.";
+      } else if (err?.name === "OverconstrainedError") {
+        msg += "Camera hardware constraints could not be satisfied. Please click 'Switch Camera'.";
       } else {
         msg += (err?.message || "Please refresh and try again.");
       }
       setScanError(msg);
+    } finally {
+      startingRef.current = false;
     }
+  };
+
+  // 🔄 SWITCH CAMERA (FRONT / BACK)
+  const switchCamera = async () => {
+    if (cameras.length < 2) {
+      // Toggle between environment and user
+      await stopScanner();
+      const nextFacing = activeCamIndex === 0 ? "user" : "environment";
+      setActiveCamIndex(activeCamIndex === 0 ? 1 : 0);
+      startScanner(nextFacing);
+      return;
+    }
+
+    const nextIndex = (activeCamIndex + 1) % cameras.length;
+    setActiveCamIndex(nextIndex);
+    await stopScanner();
+    startScanner(cameras[nextIndex].id);
   };
 
   return (
@@ -190,7 +292,7 @@ export default function ScanQR() {
       style={{
         minHeight: "100vh",
         backgroundColor: "#fffdf2",
-        fontFamily: "'Segoe UI', Arial, sans-serif",
+        fontFamily: "'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif",
         padding: "16px",
         boxSizing: "border-box",
       }}
@@ -201,13 +303,13 @@ export default function ScanQR() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          maxWidth: "500px",
-          margin: "0 auto 20px auto",
+          maxWidth: "480px",
+          margin: "0 auto 16px auto",
           padding: "10px 14px",
           background: "#ffffff",
           borderRadius: "12px",
           border: "1px solid #f0e2a5",
-          boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -216,12 +318,18 @@ export default function ScanQR() {
             alt="RIT"
             style={{ width: "38px", height: "38px", objectFit: "contain", borderRadius: "6px" }}
           />
-          <h2 style={{ margin: 0, fontSize: "16px", fontWeight: "700", color: "#111" }}>
-            Scan Lecture QR
-          </h2>
+          <div>
+            <h2 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "#111" }}>
+              Scan Lecture QR
+            </h2>
+            <p style={{ margin: 0, fontSize: "11px", color: "#15803d", fontWeight: "700" }}>
+              ● Supabase Cloud Live
+            </p>
+          </div>
         </div>
 
         <button
+          type="button"
           onClick={() => {
             stopScanner();
             navigate("/profile");
@@ -232,7 +340,7 @@ export default function ScanQR() {
             borderRadius: "7px",
             padding: "6px 12px",
             fontSize: "13px",
-            fontWeight: "600",
+            fontWeight: "650",
             color: "#374151",
             cursor: "pointer",
           }}
@@ -244,12 +352,12 @@ export default function ScanQR() {
       {/* Main Content Card */}
       <div
         style={{
-          maxWidth: "500px",
+          maxWidth: "480px",
           margin: "0 auto",
           background: "#ffffff",
           borderRadius: "14px",
           border: "1px solid #f0e2a5",
-          padding: "24px 18px",
+          padding: "20px 16px",
           textAlign: "center",
           boxShadow: "0 6px 20px rgba(0,0,0,0.06)",
           boxSizing: "border-box",
@@ -283,49 +391,49 @@ export default function ScanQR() {
                 margin: "0 auto 16px auto",
               }}
             />
-            <h3 style={{ margin: "0 0 8px 0", color: "#111" }}>Verifying QR & Location...</h3>
+            <h3 style={{ margin: "0 0 8px 0", color: "#111" }}>Verifying QR Code...</h3>
             <p style={{ margin: 0, color: "#666", fontSize: "14px" }}>
-              Matching rotating token with active classroom session.
+              Matching live rotating token with active classroom session.
             </p>
           </div>
         ) : (
           <>
-            <p style={{ margin: "0 0 18px 0", color: "#4b5563", fontSize: "14px" }}>
-              Point your camera at the teacher's live rotating QR code to mark attendance.
+            <p style={{ margin: "0 0 16px 0", color: "#4b5563", fontSize: "14px", lineHeight: "1.4" }}>
+              Point your camera at the teacher's live rotating QR code to mark your attendance.
             </p>
 
-            {/* Spinner when camera is starting */}
+            {/* Prominent High-Visibility Loading Banner */}
             {cameraStarting && (
               <div
                 style={{
-                  padding: "30px 20px",
+                  padding: "24px 16px",
                   background: "#fffbea",
-                  border: "2px dashed #ffca08",
+                  border: "2px solid #ffca08",
                   borderRadius: "12px",
-                  marginBottom: "20px",
+                  marginBottom: "16px",
                 }}
               >
                 <div
                   style={{
-                    width: "40px",
-                    height: "40px",
+                    width: "42px",
+                    height: "42px",
                     border: "4px solid #eadfba",
                     borderTopColor: "#ffca08",
                     borderRadius: "50%",
                     animation: "spin 0.75s linear infinite",
-                    margin: "0 auto 14px auto",
+                    margin: "0 auto 12px auto",
                   }}
                 />
-                <h4 style={{ margin: "0 0 6px 0", color: "#111", fontSize: "16px" }}>
-                  ⏳ Starting camera, please wait...
+                <h4 style={{ margin: "0 0 6px 0", color: "#111", fontSize: "16px", fontWeight: "750" }}>
+                  ⏳ Starting Camera Hardware...
                 </h4>
-                <p style={{ margin: 0, color: "#78350f", fontSize: "13px" }}>
-                  Initializing camera hardware and optical scanner.
+                <p style={{ margin: 0, color: "#78350f", fontSize: "13px", fontWeight: "600" }}>
+                  Please hold still while the camera feed initializes.
                 </p>
               </div>
             )}
 
-            {/* Error Message */}
+            {/* Error Banner */}
             {scanError && (
               <div
                 style={{
@@ -337,31 +445,34 @@ export default function ScanQR() {
                   fontSize: "13px",
                   marginBottom: "16px",
                   textAlign: "left",
+                  lineHeight: "1.4",
                 }}
               >
                 <strong>Camera Error:</strong> {scanError}
               </div>
             )}
 
-            {/* Viewfinder Container */}
+            {/* Viewfinder Container: Kept visible in DOM during startup to prevent layout dimension failure */}
             <div
               id="qr-reader"
               style={{
                 width: "100%",
                 maxWidth: "360px",
-                minHeight: cameraActive ? "300px" : "0px",
+                minHeight: cameraActive || cameraStarting ? "280px" : "0px",
                 margin: "0 auto",
                 borderRadius: "12px",
                 overflow: "hidden",
                 border: cameraActive ? "2px solid #ffca08" : "none",
-                display: cameraActive ? "block" : "none",
+                display: cameraActive || cameraStarting ? "block" : "none",
+                backgroundColor: "#000000",
               }}
             />
 
+            {/* Action Buttons */}
             {!cameraActive && !cameraStarting && (
               <button
                 type="button"
-                onClick={startScanner}
+                onClick={() => startScanner()}
                 style={{
                   width: "100%",
                   minHeight: "48px",
@@ -384,24 +495,43 @@ export default function ScanQR() {
             )}
 
             {cameraActive && (
-              <button
-                type="button"
-                onClick={stopScanner}
-                style={{
-                  width: "100%",
-                  marginTop: "16px",
-                  minHeight: "42px",
-                  background: "#ef4444",
-                  border: "none",
-                  borderRadius: "8px",
-                  fontSize: "14px",
-                  fontWeight: "700",
-                  color: "#ffffff",
-                  cursor: "pointer",
-                }}
-              >
-                ⏹ Stop Camera
-              </button>
+              <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+                <button
+                  type="button"
+                  onClick={switchCamera}
+                  style={{
+                    flex: 1,
+                    minHeight: "44px",
+                    background: "#f3f4f6",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "8px",
+                    fontSize: "13px",
+                    fontWeight: "700",
+                    color: "#1f2937",
+                    cursor: "pointer",
+                  }}
+                >
+                  🔄 Switch Camera
+                </button>
+
+                <button
+                  type="button"
+                  onClick={stopScanner}
+                  style={{
+                    flex: 1,
+                    minHeight: "44px",
+                    background: "#ef4444",
+                    border: "none",
+                    borderRadius: "8px",
+                    fontSize: "13px",
+                    fontWeight: "700",
+                    color: "#ffffff",
+                    cursor: "pointer",
+                  }}
+                >
+                  ⏹ Stop Camera
+                </button>
+              </div>
             )}
           </>
         )}

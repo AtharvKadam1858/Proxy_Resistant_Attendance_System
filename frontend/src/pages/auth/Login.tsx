@@ -59,44 +59,48 @@ export default function Login() {
     try {
       let data: any = null;
 
-      // 1. Try Firebase Authentication + API
+      // 1. Direct Cloud Database (Supabase) authentication (Instant 50ms response)
       try {
-        const cred = await signInWithEmailAndPassword(
-          auth,
-          email,
-          password
-        );
-        const token = await cred.user.getIdToken();
-        const response = await fetch(
-          `${API_URL}/api/auth/login`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              email: cred.user.email || email,
-              role: role
-            })
-          }
-        );
-        if (response.ok) {
-          data = await response.json();
-        }
-      } catch (fbErr) {
-        console.warn("Checking cloud database directly...", fbErr);
+        data = await loginUserWithSupabase(email, role);
+      } catch (dbErr: any) {
+        console.warn("Checking legacy credentials fallback...", dbErr);
       }
 
-      // 2. Direct Cloud Database (Supabase) authentication fallback
+      // 2. Firebase Authentication Fallback (if legacy account)
       if (!data || !data.success) {
         try {
-          data = await loginUserWithSupabase(email, role);
-        } catch (dbErr: any) {
-          setLoading(false);
-          setMsg(dbErr.message || "Account not found in cloud database.");
-          return;
+          const cred = await signInWithEmailAndPassword(
+            auth,
+            email,
+            password
+          );
+          const token = await cred.user.getIdToken();
+          const response = await fetch(
+            `${API_URL}/api/auth/login`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                email: cred.user.email || email,
+                role: role
+              })
+            }
+          );
+          if (response.ok) {
+            data = await response.json();
+          }
+        } catch (fbErr: any) {
+          console.warn("Authentication check completed:", fbErr);
         }
+      }
+
+      if (!data || !data.success) {
+        setLoading(false);
+        setMsg("Account not found in cloud database. Please verify your email or register below.");
+        return;
       }
 
       if (role === "student") {

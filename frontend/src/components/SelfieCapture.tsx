@@ -30,25 +30,40 @@ export default function SelfieCapture({
 
     const startCamera = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "user",
-          },
-          audio: false,
-        });
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user" },
+            audio: false,
+          });
+        } catch (camErr) {
+          console.warn("Front camera mode failed, falling back to any camera:", camErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
 
         if (mounted && videoRef.current) {
           videoRef.current.srcObject = stream;
-          await videoRef.current.play();
+          videoRef.current.setAttribute("playsinline", "true");
+          videoRef.current.setAttribute("webkit-playsinline", "true");
+          try {
+            await videoRef.current.play();
+          } catch (playErr) {
+            console.warn("Video play interrupted:", playErr);
+          }
           setCameraReady(true);
         } else {
-          stream.getTracks().forEach((track) => track.stop());
+          stream.getTracks().forEach((track) => {
+            track.stop();
+            track.enabled = false;
+          });
         }
       } catch (err) {
         console.error("Camera error:", err);
-
         alert(
-          "Unable to access front camera. Please allow camera permission."
+          "Unable to access camera. Please allow camera permissions in your browser."
         );
       }
     };
@@ -59,13 +74,16 @@ export default function SelfieCapture({
       mounted = false;
 
       if (videoRef.current) {
-        const stream =
-          videoRef.current.srcObject as MediaStream | null;
-
+        try {
+          videoRef.current.pause();
+        } catch {}
+        const stream = videoRef.current.srcObject as MediaStream | null;
         if (stream) {
-          stream.getTracks().forEach((track) => track.stop());
+          stream.getTracks().forEach((track) => {
+            track.stop();
+            track.enabled = false;
+          });
         }
-
         videoRef.current.srcObject = null;
       }
     };
@@ -98,12 +116,15 @@ export default function SelfieCapture({
       return;
     }
 
-    const stream =
-      videoRef.current.srcObject as MediaStream | null;
+    try {
+      videoRef.current.pause();
+    } catch {}
 
+    const stream = videoRef.current.srcObject as MediaStream | null;
     if (stream) {
       stream.getTracks().forEach((track) => {
         track.stop();
+        track.enabled = false;
       });
     }
 

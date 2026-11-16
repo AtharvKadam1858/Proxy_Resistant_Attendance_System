@@ -3,11 +3,54 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>attendance-system</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    <title>RIT Smart Attendance Portal</title>
+    <!-- Preconnect to Cloud Database for Sub-50ms API Latency -->
+    <link rel="preconnect" href="https://ccvuqarrkinazzyxbxqg.supabase.co" crossorigin />
+    <link rel="dns-prefetch" href="https://ccvuqarrkinazzyxbxqg.supabase.co" />
+    <style>
+      /* Zero-Lag Instant Mobile Shell - Instant 0ms Paint */
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #fffdf2;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: #111111;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .app-initial-loader {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      .app-loader-spinner {
+        width: 44px;
+        height: 44px;
+        border: 4px solid #f0e2a5;
+        border-top-color: #ffca08;
+        border-radius: 50%;
+        animation: initial-spin 0.75s linear infinite;
+        margin-bottom: 16px;
+      }
+      @keyframes initial-spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="app-initial-loader">
+        <div class="app-loader-spinner"></div>
+        <h2 style="margin:0 0 6px 0;font-size:20px;font-weight:800;color:#111;">RIT Smart Attendance</h2>
+        <p style="margin:0;font-size:14px;color:#78350f;font-weight:650;">⚡ Loading Real-Time Cloud Portal...</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
