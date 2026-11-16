@@ -76,6 +76,29 @@ export default function ScanQR() {
     };
   }, [stopScanner]);
 
+  // 🔊 Audio Chime & Mobile Haptic Vibration Feedback on QR Detection
+  const playScanSuccessFeedback = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.35);
+    } catch {}
+    try {
+      if ("vibrate" in navigator) {
+        navigator.vibrate([100, 50, 100]);
+      }
+    } catch {}
+  };
+
   // ▶ BULLETPROOF MOBILE CAMERA INITIALIZATION WITH MULTI-TIER FALLBACK
   const startScanner = async (overrideCameraId?: string) => {
     if (startingRef.current || cameraActive) return;
@@ -146,6 +169,8 @@ export default function ScanQR() {
       const onScanSuccess = async (decodedText: string) => {
         if (scannedRef.current) return;
         scannedRef.current = true;
+
+        playScanSuccessFeedback();
 
         const currentQrToken = decodedText.trim();
         setQrToken(currentQrToken);

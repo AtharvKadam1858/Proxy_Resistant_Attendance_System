@@ -67,6 +67,7 @@ export default function Profile() {
 
   // 📊 Attendance & University Exam Eligibility State
   const [attendanceStats, setAttendanceStats] = useState<{ total: number; present: number; percentage: number } | null>(null);
+  const [showCertificateModal, setShowCertificateModal] = useState(false);
 
   // 🏥 Medical / OD Leave Application State
   const [showLeaveModal, setShowLeaveModal] = useState(false);
@@ -525,6 +526,58 @@ export default function Profile() {
               }}
             >
               🏥 Apply for Leave / OD
+            </button>
+          </div>
+        )}
+
+        {/* 📈 75% Attendance Projection & Official Certificate Trigger */}
+        {attendanceStats !== null && (
+          <div
+            style={{
+              margin: "10px 20px 0 20px",
+              padding: "10px 14px",
+              background: "#f8fafc",
+              border: "1px dashed #cbd5e1",
+              borderRadius: "8px",
+              fontSize: "12.5px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "10px",
+            }}
+          >
+            {attendanceStats.percentage >= 75 ? (
+              <div style={{ color: "#166534" }}>
+                <strong>🎉 75% Safe Margin: </strong>
+                <span>
+                  You can safely miss up to <b>{Math.max(0, Math.floor(attendanceStats.present / 0.75) - attendanceStats.total)}</b> more classes and still maintain university exam eligibility.
+                </span>
+              </div>
+            ) : (
+              <div style={{ color: "#991b1b" }}>
+                <strong>🎯 Exam Clearance Target: </strong>
+                <span>
+                  You need to attend the next <b>{Math.max(1, Math.ceil((0.75 * attendanceStats.total - attendanceStats.present) / 0.25))}</b> consecutive lectures to recover 75% eligibility.
+                </span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowCertificateModal(true)}
+              style={{
+                padding: "5px 12px",
+                background: "#eff6ff",
+                border: "1px solid #bfdbfe",
+                borderRadius: "6px",
+                color: "#1d4ed8",
+                fontWeight: "750",
+                fontSize: "12px",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              🖨️ Official Certificate
             </button>
           </div>
         )}
@@ -1322,6 +1375,175 @@ export default function Profile() {
                   style={{ flex: 1, background: "#f1f5f9", color: "#334155", border: "1px solid #cbd5e1", padding: "10px", borderRadius: "6px", fontWeight: "600", cursor: "pointer", fontSize: "13px" }}
                 >
                   Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🖨️ OFFICIAL PRINTABLE ATTENDANCE CERTIFICATE & EXAMINATION CLEARANCE MODAL */}
+      {showCertificateModal && student && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.75)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999,
+          padding: "16px"
+        }}>
+          <div style={{
+            background: "#ffffff",
+            borderRadius: "16px",
+            maxWidth: "600px",
+            width: "100%",
+            overflow: "hidden",
+            boxShadow: "0 25px 50px rgba(0,0,0,0.3)",
+            border: "2px solid #ffca08"
+          }}>
+            {/* Institute Crest Header */}
+            <div style={{
+              background: "linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%)",
+              color: "#ffffff",
+              padding: "20px 24px",
+              textAlign: "center",
+              position: "relative"
+            }}>
+              <button
+                type="button"
+                onClick={() => setShowCertificateModal(false)}
+                style={{
+                  position: "absolute",
+                  top: "14px",
+                  right: "16px",
+                  background: "transparent",
+                  border: "none",
+                  color: "#ffffff",
+                  fontSize: "22px",
+                  cursor: "pointer"
+                }}
+              >
+                ✕
+              </button>
+              <img src={ritLogo} alt="RIT Crest" style={{ width: "48px", height: "48px", objectFit: "contain", marginBottom: "6px" }} />
+              <h3 style={{ margin: "0 0 2px 0", fontSize: "17px", fontWeight: "800", letterSpacing: "0.5px" }}>
+                Rajarambapu Institute of Technology, Rajaramnagar
+              </h3>
+              <p style={{ margin: 0, fontSize: "11px", opacity: 0.85 }}>
+                An Autonomous Institute | Approved by AICTE | Affiliated to Shivaji University, Kolhapur
+              </p>
+              <div style={{ marginTop: "8px", display: "inline-block", background: "#ffca08", color: "#000", fontWeight: "800", fontSize: "11px", padding: "2px 10px", borderRadius: "12px" }}>
+                OFFICIAL ATTENDANCE CERTIFICATE & EXAMINATION CLEARANCE
+              </div>
+            </div>
+
+            {/* Certificate Body */}
+            <div style={{ padding: "24px", fontSize: "13px", lineHeight: "1.6" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", background: "#f8fafc", padding: "14px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+                <div><strong>Student Name:</strong> {student.full_name}</div>
+                <div><strong>PRN / Roll No:</strong> {student.prn}</div>
+                <div><strong>Department:</strong> {student.branch}</div>
+                <div><strong>Academic Year / Div:</strong> {student.year} (Div {student.division})</div>
+                <div><strong>College Email:</strong> {student.email}</div>
+                <div><strong>Date of Issue:</strong> {new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</div>
+              </div>
+
+              {/* Metrics Table */}
+              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "16px", fontSize: "13px" }}>
+                <thead>
+                  <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
+                    <th style={{ padding: "8px 12px", border: "1px solid #cbd5e1" }}>Metric</th>
+                    <th style={{ padding: "8px 12px", border: "1px solid #cbd5e1" }}>Record</th>
+                    <th style={{ padding: "8px 12px", border: "1px solid #cbd5e1" }}>Requirement</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style={{ padding: "8px 12px", border: "1px solid #cbd5e1" }}>Total Academic Lectures</td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #cbd5e1", fontWeight: "700" }}>{attendanceStats?.total || 0}</td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #cbd5e1" }}>Mandatory Minimum</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: "8px 12px", border: "1px solid #cbd5e1" }}>Lectures Attended (Verified)</td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #cbd5e1", fontWeight: "700", color: "#166534" }}>{attendanceStats?.present || 0}</td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #cbd5e1" }}>Biometric QR & Face Verified</td>
+                  </tr>
+                  <tr style={{ background: (attendanceStats?.percentage || 0) >= 75 ? "#f0fdf4" : "#fef2f2" }}>
+                    <td style={{ padding: "8px 12px", border: "1px solid #cbd5e1", fontWeight: "750" }}>Attendance Percentage</td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #cbd5e1", fontWeight: "800", color: (attendanceStats?.percentage || 0) >= 75 ? "#166534" : "#991b1b" }}>
+                      {attendanceStats?.percentage || 0}%
+                    </td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #cbd5e1", fontWeight: "700" }}>
+                      {(attendanceStats?.percentage || 0) >= 75 ? "✅ 75% Criteria Satisfied" : "❌ Defaulter Threshold (<75%)"}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* Clearance Seal */}
+              <div style={{
+                padding: "12px 16px",
+                borderRadius: "8px",
+                background: (attendanceStats?.percentage || 0) >= 75 ? "#f0fdf4" : "#fef2f2",
+                border: `1.5px solid ${(attendanceStats?.percentage || 0) >= 75 ? "#86efac" : "#fca5a5"}`,
+                textAlign: "center",
+                marginBottom: "20px"
+              }}>
+                <span style={{ fontSize: "13.5px", fontWeight: "800", color: (attendanceStats?.percentage || 0) >= 75 ? "#166534" : "#991b1b" }}>
+                  {(attendanceStats?.percentage || 0) >= 75
+                    ? "🎓 CERTIFIED: ELIGIBLE TO APPEAR FOR UNIVERSITY END-SEMESTER EXAMINATIONS"
+                    : "⚠️ ATTENTION: ATTENDANCE SHORTAGE DETECTED. CONTACT HOD OFFICE FOR REMEDIAL SESSIONS"}
+                </span>
+              </div>
+
+              {/* Signatures */}
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: "20px", paddingTop: "12px", borderTop: "1px dashed #cbd5e1", fontSize: "12px" }}>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontWeight: "750", color: "#1e3a8a" }}>Digitally Verified System Seal</div>
+                  <div style={{ color: "#64748b", fontSize: "11px" }}>RIT Cloud Examination Cell</div>
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontWeight: "750", color: "#1e3a8a" }}>Academic Dean & HOD</div>
+                  <div style={{ color: "#64748b", fontSize: "11px" }}>Rajarambapu Institute of Technology</div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCertificateModal(false)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    background: "#f3f4f6",
+                    color: "#374151",
+                    fontWeight: "700",
+                    cursor: "pointer"
+                  }}
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  style={{
+                    flex: 2,
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: "#ffca08",
+                    color: "#000000",
+                    fontWeight: "800",
+                    cursor: "pointer",
+                    boxShadow: "0 2px 8px rgba(255,202,8,0.3)"
+                  }}
+                >
+                  🖨️ Print / Save as PDF
                 </button>
               </div>
             </div>

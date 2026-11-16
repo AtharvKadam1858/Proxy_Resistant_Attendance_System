@@ -106,6 +106,26 @@ export default function Dashboard() {
 
   const [liveAttendance, setLiveAttendance] =
     useState<any[]>([]);
+  const [rosterSearch, setRosterSearch] = useState("");
+  const prevCountRef = useRef(0);
+
+  // 🔔 Subtle Faculty Notification Chime when a student marks attendance live
+  const playAttendeeChime = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+      osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+      gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.25);
+    } catch {}
+  };
 
   const [sessionInfo, setSessionInfo] =
     useState<any>(null);
@@ -291,7 +311,12 @@ export default function Dashboard() {
                 if (data.session) {
                   setSessionInfo(data.session);
                 }
-                setLiveAttendance(data.students || data.attendance || []);
+                const newStudents = data.students || data.attendance || [];
+                if (newStudents.length > prevCountRef.current && prevCountRef.current > 0) {
+                  playAttendeeChime();
+                }
+                prevCountRef.current = newStudents.length;
+                setLiveAttendance(newStudents);
               }
             } catch (err) {
               try {
@@ -300,7 +325,12 @@ export default function Dashboard() {
                   const data = await res.json();
                   if (data.success) {
                     setSessionInfo(data.session);
-                    setLiveAttendance(data.students || []);
+                    const newStudents = data.students || [];
+                    if (newStudents.length > prevCountRef.current && prevCountRef.current > 0) {
+                      playAttendeeChime();
+                    }
+                    prevCountRef.current = newStudents.length;
+                    setLiveAttendance(newStudents);
                   }
                 }
               } catch {}
@@ -879,6 +909,28 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {/* 🔍 Real-Time Attendee Search & Filter */}
+            {liveAttendance.length > 0 && (
+              <div style={{ marginTop: "12px", marginBottom: "12px", display: "flex", gap: "10px", alignItems: "center" }}>
+                <input
+                  type="text"
+                  placeholder="🔍 Search attendee by PRN or Name..."
+                  value={rosterSearch}
+                  onChange={(e) => setRosterSearch(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: "8px 12px",
+                    borderRadius: "6px",
+                    border: "1px solid #d1d5db",
+                    fontSize: "13px",
+                  }}
+                />
+                <span style={{ fontSize: "12px", fontWeight: "700", color: "#4b5563", background: "#f3f4f6", padding: "6px 10px", borderRadius: "6px", whiteSpace: "nowrap" }}>
+                  {liveAttendance.filter((s: any) => (s.prn || "").toLowerCase().includes(rosterSearch.toLowerCase()) || (s.student_name || "").toLowerCase().includes(rosterSearch.toLowerCase())).length} of {liveAttendance.length}
+                </span>
+              </div>
+            )}
+
             <table
               style={{
                 width: "100%",
@@ -902,7 +954,12 @@ export default function Dashboard() {
                     <td colSpan={4}>Waiting for students...</td>
                   </tr>
                 ) : (
-                  liveAttendance.map((student, index) => (
+                  liveAttendance
+                    .filter((s: any) =>
+                      (s.prn || "").toLowerCase().includes(rosterSearch.toLowerCase()) ||
+                      (s.student_name || "").toLowerCase().includes(rosterSearch.toLowerCase())
+                    )
+                    .map((student, index) => (
                     <tr key={index}>
                       <td>{student.prn}</td>
                       <td>{student.student_name}</td>
