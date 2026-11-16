@@ -164,6 +164,7 @@ export default function SelfieCapture({
       // 2. Fetch student's registered reference photo from Supabase
       const profile = await getStudentProfile(prn);
       const studentName = profile?.full_name || localStorage.getItem("full_name") || "Student";
+      setStatusMessage(`🔬 Comparing live face with registered biometric photo for ${studentName}...`);
       const registeredPhoto =
         profile?.avatar_url ||
         (profile?.face_folder?.startsWith("data:") || profile?.face_folder?.startsWith("http")

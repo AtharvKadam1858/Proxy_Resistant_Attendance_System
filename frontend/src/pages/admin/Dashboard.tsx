@@ -1270,26 +1270,51 @@ export default function AdminDashboard() {
                               <td>{student.email}</td>
                               <td>{student.phone || "Not set"}</td>
                               <td>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openStudentEditor(student);
-                                  }}
-                                  style={{
-                                    padding: "5px 10px",
-                                    background: "#ffca08",
-                                    color: "#000000",
-                                    border: "none",
-                                    borderRadius: "6px",
-                                    fontWeight: "750",
-                                    fontSize: "12px",
-                                    cursor: "pointer",
-                                    boxShadow: "0 1px 4px rgba(255,202,8,0.3)"
-                                  }}
-                                >
-                                  👁️ View / Edit
-                                </button>
+                                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openStudentEditor(student);
+                                    }}
+                                    style={{
+                                      padding: "5px 10px",
+                                      background: "#ffca08",
+                                      color: "#000000",
+                                      border: "none",
+                                      borderRadius: "6px",
+                                      fontWeight: "750",
+                                      fontSize: "12px",
+                                      cursor: "pointer",
+                                      boxShadow: "0 1px 4px rgba(255,202,8,0.3)"
+                                    }}
+                                  >
+                                    👁️ View / Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteStudent(student.prn, student.full_name);
+                                    }}
+                                    style={{
+                                      padding: "5px 9px",
+                                      background: "#fee2e2",
+                                      color: "#dc2626",
+                                      border: "1px solid #fca5a5",
+                                      borderRadius: "6px",
+                                      fontWeight: "750",
+                                      fontSize: "12px",
+                                      cursor: "pointer",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: "3px"
+                                    }}
+                                    title="Delete Student from Cloud Database"
+                                  >
+                                    🗑️ Delete
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );
