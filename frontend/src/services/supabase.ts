@@ -828,3 +828,21 @@ export async function updateStudentProfilePhoto(prn: string, avatarUrl: string) 
   });
   return { success: true };
 }
+
+export async function updateStudentByAdmin(prn: string, updatedFields: Record<string, any>) {
+  const cleanPrn = prn.trim();
+  const res = await supabaseQuery(`students?prn=eq.${encodeURIComponent(cleanPrn)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(updatedFields),
+  });
+  return { success: true, message: "Student record updated successfully!", data: res };
+}
+
+export async function deleteStudentByAdmin(prn: string) {
+  const cleanPrn = prn.trim();
+  await supabaseQuery(`students?prn=eq.${encodeURIComponent(cleanPrn)}`, {
+    method: "DELETE",
+  });
+  return { success: true, message: `Student ${cleanPrn} removed from database.` };
+}

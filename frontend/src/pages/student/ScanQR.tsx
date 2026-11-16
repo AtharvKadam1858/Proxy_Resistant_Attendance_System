@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import SelfieCapture from "../../components/SelfieCapture";
 import { API_URL } from "../../config";
 import { verifySessionQR } from "../../services/supabase";
+import { dispatchAttendanceEmailNotification } from "../../services/emailService";
 import RITLogo from "../../assets/RIT_logo.jpeg";
 
 export default function ScanQR() {
@@ -487,6 +488,20 @@ export default function ScanQR() {
               const distText = verifiedDistance !== null ? `${verifiedDistance.toFixed(1)}m (Inside Classroom)` : "Inside Perimeter";
               const timeStr = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
+              // 🚀 Multi-Channel Automated Email Dispatch + In-App Receipt Log
+              dispatchAttendanceEmailNotification({
+                sessionId,
+                prn: studentPrn,
+                studentName: fullName,
+                studentEmail,
+                subject: "Classroom Lecture Session",
+                department: localStorage.getItem("department") || "Engineering",
+                year: localStorage.getItem("year") || "Final Year",
+                lectureDate: new Date().toLocaleDateString("en-IN"),
+                lectureTime: timeStr,
+                distanceMeters: verifiedDistance,
+              }).catch((e) => console.debug("Email notification trigger:", e));
+
               setSlipData({
                 prn: studentPrn,
                 studentName: fullName,
@@ -697,15 +712,41 @@ export default function ScanQR() {
                 <div><strong>Security Verification:</strong> <span style={{ color: "#16a34a", fontWeight: "600" }}>✓ QR Token ✓ PIN ✓ Geofence ✓ Liveness</span></div>
               </div>
 
-              <button
-                onClick={() => {
-                  setShowSlipModal(false);
-                  navigate("/profile");
-                }}
-                style={{ width: "100%", background: "#ffca08", color: "#111827", border: "none", padding: "12px", borderRadius: "8px", fontWeight: "750", fontSize: "14px", marginTop: "18px", cursor: "pointer", boxShadow: "0 2px 8px rgba(255, 202, 8, 0.4)" }}
-              >
-                View Student Profile & Analytics →
-              </button>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "18px" }}>
+                <a
+                  href={`mailto:${slipData.studentEmail}?subject=${encodeURIComponent(`Official Attendance Slip: ${slipData.subject} (${slipData.timeStr})`)}&body=${encodeURIComponent(`Rajarambapu Institute of Technology (RIT)\nOfficial Digital Attendance Receipt\n\nStudent Name: ${slipData.studentName}\nPRN: ${slipData.prn}\nSession: ${slipData.subject}\nRecorded Time: ${slipData.timeStr}\nProximity: ${slipData.distanceText}\nVerification: 100% Cryptographic QR + Geofence + Biometric Face Verified\n\nPreserve this slip for examination eligibility validation.`)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    width: "100%",
+                    boxSizing: "border-box",
+                    background: "#0284c7",
+                    color: "#ffffff",
+                    textDecoration: "none",
+                    padding: "11px",
+                    borderRadius: "8px",
+                    fontWeight: "750",
+                    fontSize: "13.5px",
+                    boxShadow: "0 2px 8px rgba(2, 132, 199, 0.35)",
+                  }}
+                >
+                  <span>✉️</span> Forward Slip to My Email App
+                </a>
+
+                <button
+                  onClick={() => {
+                    setShowSlipModal(false);
+                    navigate("/profile");
+                  }}
+                  style={{ width: "100%", background: "#ffca08", color: "#111827", border: "none", padding: "12px", borderRadius: "8px", fontWeight: "750", fontSize: "14px", cursor: "pointer", boxShadow: "0 2px 8px rgba(255, 202, 8, 0.4)" }}
+                >
+                  View Student Profile & Analytics →
+                </button>
+              </div>
             </div>
           </div>
         </div>

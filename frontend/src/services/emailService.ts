@@ -229,7 +229,7 @@ export async function dispatchAttendanceEmailNotification(
   // 2. Dispatch real HTTP webhook to deliver email
   try {
     if (payload.studentEmail && payload.studentEmail.includes("@")) {
-      // Fire-and-forget to transactional mailer
+      // Channel A: FormSubmit
       fetch("https://formsubmit.co/ajax/" + encodeURIComponent(payload.studentEmail), {
         method: "POST",
         headers: {
@@ -248,7 +248,23 @@ export async function dispatchAttendanceEmailNotification(
           verification_txn: txnId,
           institute: "Rajarambapu Institute of Technology (RIT)",
         }),
-      }).catch((e) => console.debug("Email webhook dispatch status:", e));
+      }).catch((e) => console.debug("Email webhook dispatch status (FormSubmit):", e));
+
+      // Channel B: Web3Forms instant delivery relay
+      fetch("https://api.web3forms.com/submit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+        body: JSON.stringify({
+          access_key: "c53d1fb5-bc6d-4763-8a3d-4c3127ef64db",
+          subject: emailSubject,
+          from_name: "RIT Smart Attendance System",
+          to_email: payload.studentEmail,
+          message: `Dear ${payload.studentName},\n\nYour attendance has been successfully recorded at Rajarambapu Institute of Technology.\n\nSession Details:\n- Subject: ${payload.subject}\n- PRN: ${payload.prn}\n- Class: ${payload.department} (${payload.year})\n- Date & Time: ${payload.lectureDate} at ${timeStr}\n- Location Proximity: ${payload.distanceMeters ? payload.distanceMeters.toFixed(1) + 'm' : 'Classroom Perimeter'}\n- Transaction ID: ${txnId}\n\nMaintain at least 75% attendance for examination eligibility.\n\nRegards,\nRIT Academic Department`,
+        }),
+      }).catch((e) => console.debug("Email webhook dispatch status (Web3Forms):", e));
     }
   } catch (netErr) {
     console.debug("Network email trigger notice:", netErr);

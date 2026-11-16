@@ -12,7 +12,7 @@ import {
 } from "firebase/app";
 
 import { API_URL } from "../../config";
-import { getStudentsList, addNewStudent, updateUserPassword } from "../../services/supabase";
+import { getStudentsList, addNewStudent, updateUserPassword, updateStudentByAdmin, deleteStudentByAdmin } from "../../services/supabase";
 import ritLogo from "../../assets/RIT_logo.jpeg";
 
 const firebaseConfig = {
@@ -114,9 +114,109 @@ export default function AdminDashboard() {
   const [studentsLoading, setStudentsLoading] =
     useState(false);
 
-  const [excelFile, setExcelFile] =
-    useState<File | null>(null);
+  // 🎓 Admin Navigation Tabs (Tab 1: Enroll / Add, Tab 2: Student Directory & Batch)
+  const [adminTab, setAdminTab] = useState<"directory" | "enroll">("directory");
+  const [selectedDivision, setSelectedDivision] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
+  // 📝 Student Record View & Edit State
+  const [editingStudent, setEditingStudent] = useState<any | null>(null);
+  const [editForm, setEditForm] = useState<any>({});
+  const [editPhotoPreview, setEditPhotoPreview] = useState<string>("");
+  const [editLoading, setEditLoading] = useState<boolean>(false);
+  const [editMsg, setEditMsg] = useState<string>("");
+
+  const openStudentEditor = (student: any) => {
+    setEditingStudent(student);
+    setEditForm({
+      prn: student.prn || "",
+      full_name: student.full_name || "",
+      email: student.email || "",
+      phone: student.phone || "",
+      parent_phone: student.parent_phone || "",
+      blood_group: student.blood_group || "A+",
+      year: student.year || "Final Year",
+      branch: student.branch || "AIML",
+      division: student.division || "A",
+      gender: student.gender || "Male",
+      address: student.address || "",
+      password: "",
+    });
+    setEditPhotoPreview(student.avatar_url || student.face_folder || "");
+    setEditMsg("");
+  };
+
+  const handleEditPhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = () => {
+        setEditPhotoPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSaveStudentChanges = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStudent) return;
+    setEditLoading(true);
+    setEditMsg("");
+
+    try {
+      const payload: any = {
+        full_name: editForm.full_name.trim(),
+        email: editForm.email.trim().toLowerCase(),
+        phone: editForm.phone.trim(),
+        parent_phone: editForm.parent_phone?.trim() || null,
+        blood_group: editForm.blood_group?.trim() || null,
+        year: editForm.year,
+        branch: editForm.branch,
+        division: editForm.division,
+        gender: editForm.gender,
+        address: editForm.address?.trim() || null,
+      };
+
+      if (editForm.password && editForm.password.trim().length >= 6) {
+        payload.password_hash = editForm.password.trim();
+      }
+
+      if (editPhotoPreview && editPhotoPreview.startsWith("data:")) {
+        payload.avatar_url = editPhotoPreview;
+        payload.face_folder = editPhotoPreview;
+      }
+
+      await updateStudentByAdmin(editingStudent.prn, payload);
+      setEditMsg("✅ Student record successfully updated in cloud database!");
+      await fetchStudents(selectedYear, selectedDepartment);
+      setTimeout(() => {
+        setEditingStudent(null);
+      }, 1400);
+    } catch (err: any) {
+      setEditMsg("❌ " + (err?.message || "Failed to update student details."));
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const handleDeleteStudent = async (prn: string, name: string) => {
+    if (!confirm(`Are you sure you want to permanently delete student ${name} (PRN: ${prn}) from the cloud database?`)) {
+      return;
+    }
+    setEditLoading(true);
+    try {
+      await deleteStudentByAdmin(prn);
+      alert(`✅ Student ${name} (${prn}) was removed from the database.`);
+      setEditingStudent(null);
+      await fetchStudents(selectedYear, selectedDepartment);
+    } catch (err: any) {
+      alert("❌ " + (err?.message || "Failed to delete student."));
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const [excelFile, setExcelFile] = useState<File | null>(null);
   const [photosZip, setPhotosZip] =
     useState<File | null>(null);
 
@@ -590,703 +690,815 @@ export default function AdminDashboard() {
       </header>
 
       <main className="admin-container">
-        <section className="admin-card">
-          <h2>
-            Welcome,
-          </h2>
-
-          <h2 className="admin-name">
-            {adminName}
-          </h2>
-
-          <div className="admin-title">
-            Add New Student
+        <section className="admin-card" style={{ maxWidth: "1050px", margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "22px", color: "#111827" }}>
+                Welcome, <span className="admin-name" style={{ color: "#d97706" }}>{adminName}</span>
+              </h2>
+              <p style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#6b7280" }}>
+                Academic Administration & Student Cloud Database Control Portal
+              </p>
+            </div>
+            <span style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", color: "#065f46", padding: "5px 12px", borderRadius: "12px", fontSize: "12px", fontWeight: "750" }}>
+              ● Supabase Cloud Active
+            </span>
           </div>
 
-          <form
-            onSubmit={
-              handleAddStudent
-            }
-          >
-            <div className="admin-field">
-              <label>
-                PRN
-                <span>*</span>
-              </label>
-
-              <input
-                type="text"
-                name="prn"
-                value={
-                  formData.prn
-                }
-                onChange={
-                  handleChange
-                }
-                placeholder="Enter PRN"
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="admin-field">
-              <label>
-                Full Name
-                <span>*</span>
-              </label>
-
-              <input
-                type="text"
-                name="full_name"
-                value={
-                  formData.full_name
-                }
-                onChange={
-                  handleChange
-                }
-                placeholder="Enter student name"
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="admin-field">
-              <label>
-                Email
-                <span>*</span>
-              </label>
-
-              <input
-                type="email"
-                name="email"
-                value={
-                  formData.email
-                }
-                onChange={
-                  handleChange
-                }
-                placeholder="student@gmail.com"
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="admin-field">
-              <label>
-                Student Password
-                <span>*</span>
-              </label>
-
-              <input
-                type="password"
-                name="password"
-                value={
-                  formData.password
-                }
-                onChange={
-                  handleChange
-                }
-                placeholder="Minimum 6 characters"
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="admin-field">
-              <label>
-                Phone
-                <span>*</span>
-              </label>
-
-              <input
-                type="tel"
-                name="phone"
-                value={
-                  formData.phone
-                }
-                onChange={
-                  handleChange
-                }
-                placeholder="Enter phone number"
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="admin-field">
-              <label>
-                Select Year
-                <span>*</span>
-              </label>
-
-              <select
-                name="year"
-                value={
-                  formData.year
-                }
-                onChange={
-                  handleChange
-                }
-                required
-                disabled={loading}
-              >
-                <option value="">
-                  Select Year
-                </option>
-
-                <option value="First Year">
-                  First Year
-                </option>
-
-                <option value="Second Year">
-                  Second Year
-                </option>
-
-                <option value="Third Year">
-                  Third Year
-                </option>
-
-                <option value="Final Year">
-                  Final Year
-                </option>
-              </select>
-            </div>
-
-            <div className="admin-field">
-              <label>
-                Select Department
-                <span>*</span>
-              </label>
-
-              <select
-                name="branch"
-                value={
-                  formData.branch
-                }
-                onChange={
-                  handleChange
-                }
-                required
-                disabled={loading}
-              >
-                <option value="">
-                  Select Department
-                </option>
-
-                <option value="AIML">
-                  AIML
-                </option>
-
-                <option value="CSE">
-                  CSE
-                </option>
-
-                <option value="ENTC">
-                  ENTC
-                </option>
-
-                <option value="Mechanical">
-                  Mechanical
-                </option>
-
-                <option value="Civil">
-                  Civil
-                </option>
-              </select>
-            </div>
-
-            <div className="admin-field">
-              <label>
-                Select Division
-                <span>*</span>
-              </label>
-
-              <select
-                name="division"
-                value={
-                  formData.division
-                }
-                onChange={
-                  handleChange
-                }
-                required
-                disabled={loading}
-              >
-                <option value="">
-                  Select Division
-                </option>
-
-                <option value="A">
-                  A
-                </option>
-
-                <option value="B">
-                  B
-                </option>
-
-                <option value="C">
-                  C
-                </option>
-
-                <option value="D">
-                  D
-                </option>
-              </select>
-            </div>
-
-            <div className="admin-field">
-              <label>
-                Gender
-              </label>
-
-              <select
-                name="gender"
-                value={
-                  formData.gender
-                }
-                onChange={
-                  handleChange
-                }
-                disabled={loading}
-              >
-                <option value="">
-                  Select Gender
-                </option>
-
-                <option value="Male">
-                  Male
-                </option>
-
-                <option value="Female">
-                  Female
-                </option>
-
-                <option value="Other">
-                  Other
-                </option>
-              </select>
-            </div>
-
-            <div className="admin-field">
-              <label>
-                Student Photo
-                <span>*</span>
-              </label>
-
-              <input
-                type="file"
-                accept="image/*"
-                onChange={
-                  handlePhotoChange
-                }
-                disabled={loading}
-                required
-              />
-
-              {photo && (
-                <p className="selected-photo">
-                  Selected: {photo.name}
-                </p>
-              )}
-            </div>
-
-            {message && (
-              <div className="admin-message">
-                {message}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="admin-add-btn"
-              disabled={loading}
-            >
-              {
-                loading
-                  ? "Adding Student..."
-                  : "Add Student"
-              }
-            </button>
-          </form>
-
-          <div className="bulk-upload-section">
-
-            <div className="admin-title">
-              Bulk Student Registration
-            </div>
-
-            <p className="bulk-description">
-              Upload the Excel file and a ZIP file containing
-              student photos. Each photo must be named using
-              the student's PRN.
-            </p>
-
-            <div className="excel-format-box">
-              <strong>
-                Excel columns required:
-              </strong>
-
-              <div className="excel-columns">
-                PRN, Full Name, Email, Password,
-                Phone, Year, Branch, Division, Gender
-              </div>
-
-              <strong>
-                Photo ZIP format:
-              </strong>
-
-              <div className="excel-columns">
-                Photos must be named using the student's PRN.
-                Example: 2023001.jpg
-              </div>
-            </div>
-
+          {/* 🎓 ADMIN 2-TAB NAVIGATION BAR */}
+          <div style={{
+            display: "flex",
+            background: "#f1f5f9",
+            borderRadius: "12px",
+            padding: "5px",
+            marginBottom: "20px",
+            gap: "8px",
+            border: "1.5px solid #e2e8f0"
+          }}>
             <button
               type="button"
-              className="download-template-btn"
-              onClick={() => {
-                window.open(
-                  "/student_bulk_upload_template.xlsx",
-                  "_blank"
-                );
+              onClick={() => setAdminTab("directory")}
+              style={{
+                flex: 1,
+                padding: "12px 18px",
+                borderRadius: "9px",
+                border: "none",
+                fontSize: "14px",
+                fontWeight: "800",
+                cursor: "pointer",
+                transition: "all 0.25s ease",
+                background: adminTab === "directory" ? "#ffca08" : "transparent",
+                color: adminTab === "directory" ? "#000000" : "#64748b",
+                boxShadow: adminTab === "directory" ? "0 4px 12px rgba(255,202,8,0.35)" : "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
               }}
             >
-              Download Excel Template
+              <span>👥</span> Student Directory & Class Batch Records
             </button>
-
-            <div className="admin-field">
-              <label>
-                Upload Excel File
-                <span>*</span>
-              </label>
-
-              <input
-                id="student-excel"
-                type="file"
-                accept=".xlsx,.xls"
-                onChange={
-                  handleExcelChange
-                }
-                disabled={bulkLoading}
-              />
-
-              {excelFile && (
-                <p className="selected-photo">
-                  Selected: {excelFile.name}
-                </p>
-              )}
-            </div>
-
-            <div className="admin-field">
-              <label>
-                Upload Student Photos ZIP
-                <span>*</span>
-              </label>
-
-              <input
-                id="student-photos-zip"
-                type="file"
-                accept=".zip"
-                onChange={
-                  handlePhotosZipChange
-                }
-                disabled={bulkLoading}
-              />
-
-              {photosZip && (
-                <p className="selected-photo">
-                  Selected: {photosZip.name}
-                </p>
-              )}
-            </div>
-
-            {bulkMessage && (
-              <div
-                className={`admin-message ${
-                  bulkResult
-                    ? "bulk-success"
-                    : "bulk-error"
-                }`}
-              >
-                {bulkMessage}
-              </div>
-            )}
-
-            {bulkResult && (
-              <div className="bulk-result">
-
-                <div>
-                  <strong>
-                    Total Rows:
-                  </strong>{" "}
-                  {bulkResult.total || 0}
-                </div>
-
-                <div>
-                  <strong>
-                    Registered:
-                  </strong>{" "}
-                  {bulkResult.successful || 0}
-                </div>
-
-                <div>
-                  <strong>
-                    Failed:
-                  </strong>{" "}
-                  {bulkResult.failed || 0}
-                </div>
-
-              </div>
-            )}
-
-            {bulkResult?.errors?.length > 0 && (
-              <div className="bulk-errors">
-
-                <h4>
-                  Failed Students
-                </h4>
-
-                {bulkResult.errors.map(
-                  (
-                    error: any,
-                    index: number
-                  ) => (
-                    <div
-                      key={index}
-                      className="bulk-error-row"
-                    >
-                      Row {error.row}:{" "}
-                      {error.prn || "Unknown PRN"} —{" "}
-                      {error.message}
-                    </div>
-                  )
-                )}
-
-              </div>
-            )}
 
             <button
               type="button"
-              className="admin-add-btn bulk-upload-btn"
-              onClick={
-                handleBulkStudentUpload
-              }
-              disabled={
-                bulkLoading ||
-                !excelFile ||
-                !photosZip
-              }
+              onClick={() => setAdminTab("enroll")}
+              style={{
+                flex: 1,
+                padding: "12px 18px",
+                borderRadius: "9px",
+                border: "none",
+                fontSize: "14px",
+                fontWeight: "800",
+                cursor: "pointer",
+                transition: "all 0.25s ease",
+                background: adminTab === "enroll" ? "#ffca08" : "transparent",
+                color: adminTab === "enroll" ? "#000000" : "#64748b",
+                boxShadow: adminTab === "enroll" ? "0 4px 12px rgba(255,202,8,0.35)" : "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+              }}
             >
-              {bulkLoading
-                ? "Registering Students..."
-                : "Upload Excel & Register Students"}
+              <span>➕</span> Enroll & Add Students (Manual / Bulk)
             </button>
-
           </div>
 
-          <div className="student-list-section">
-            <div className="admin-title">
-              Student List
-            </div>
+          {/* ========================================================================= */}
+          {/* TAB 1: ENROLL & ADD STUDENTS (MANUAL & BULK EXCEL/ZIP)                    */}
+          {/* ========================================================================= */}
+          {adminTab === "enroll" && (
+            <div>
+              <div className="admin-title">
+                ➕ Add New Student
+              </div>
 
-            <div className="student-filters">
-              <div className="admin-field">
-                <label>
-                  Select Year
-                </label>
+              <form onSubmit={handleAddStudent}>
+                <div className="admin-field">
+                  <label>PRN <span>*</span></label>
+                  <input
+                    type="text"
+                    name="prn"
+                    value={formData.prn}
+                    onChange={handleChange}
+                    placeholder="Enter PRN"
+                    required
+                    disabled={loading}
+                  />
+                </div>
 
-                <select
-                  value={selectedYear}
-                  onChange={(e) =>
-                    setSelectedYear(
-                      e.target.value
-                    )
-                  }
-                  disabled={
-                    studentsLoading
-                  }
+                <div className="admin-field">
+                  <label>Full Name <span>*</span></label>
+                  <input
+                    type="text"
+                    name="full_name"
+                    value={formData.full_name}
+                    onChange={handleChange}
+                    placeholder="Enter student name"
+                    required
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="admin-field">
+                  <label>Email <span>*</span></label>
+                  <input
+                    type="email"
+                    name="email"
+                    value={formData.email}
+                    onChange={handleChange}
+                    placeholder="student@ritindia.edu"
+                    required
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="admin-field">
+                  <label>Student Password <span>*</span></label>
+                  <input
+                    type="password"
+                    name="password"
+                    value={formData.password}
+                    onChange={handleChange}
+                    placeholder="Minimum 6 characters"
+                    required
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="admin-field">
+                  <label>Phone <span>*</span></label>
+                  <input
+                    type="tel"
+                    name="phone"
+                    value={formData.phone}
+                    onChange={handleChange}
+                    placeholder="Enter 10-digit mobile number"
+                    required
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="admin-field">
+                  <label>Select Year <span>*</span></label>
+                  <select name="year" value={formData.year} onChange={handleChange} required disabled={loading}>
+                    <option value="">Select Year</option>
+                    <option value="First Year">First Year</option>
+                    <option value="Second Year">Second Year</option>
+                    <option value="Third Year">Third Year</option>
+                    <option value="Final Year">Final Year</option>
+                  </select>
+                </div>
+
+                <div className="admin-field">
+                  <label>Select Department <span>*</span></label>
+                  <select name="branch" value={formData.branch} onChange={handleChange} required disabled={loading}>
+                    <option value="">Select Department</option>
+                    <option value="AIML">AIML</option>
+                    <option value="CSE">CSE</option>
+                    <option value="ENTC">ENTC</option>
+                    <option value="Mechanical">Mechanical</option>
+                    <option value="Civil">Civil</option>
+                  </select>
+                </div>
+
+                <div className="admin-field">
+                  <label>Select Division <span>*</span></label>
+                  <select name="division" value={formData.division} onChange={handleChange} required disabled={loading}>
+                    <option value="">Select Division</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                  </select>
+                </div>
+
+                <div className="admin-field">
+                  <label>Gender</label>
+                  <select name="gender" value={formData.gender} onChange={handleChange} disabled={loading}>
+                    <option value="">Select Gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                <div className="admin-field">
+                  <label>Student Photo <span>*</span></label>
+                  <input type="file" accept="image/*" onChange={handlePhotoChange} disabled={loading} required />
+                  {photo && <p className="selected-photo">Selected: {photo.name}</p>}
+                </div>
+
+                {message && <div className="admin-message">{message}</div>}
+
+                <button type="submit" className="admin-add-btn" disabled={loading}>
+                  {loading ? "Adding Student..." : "Add Student"}
+                </button>
+              </form>
+
+              {/* Bulk Upload Section */}
+              <div className="bulk-upload-section" style={{ marginTop: "30px" }}>
+                <div className="admin-title">📦 Bulk Student Registration (Excel & ZIP)</div>
+                <p className="bulk-description">
+                  Upload an Excel spreadsheet with student details and a ZIP archive containing reference photos named with each student's PRN.
+                </p>
+
+                <button
+                  type="button"
+                  className="download-template-btn"
+                  onClick={() => window.open("/student_bulk_upload_template.xlsx", "_blank")}
                 >
-                  <option value="">
-                    All Years
-                  </option>
+                  📥 Download Excel Template
+                </button>
 
-                  <option value="First Year">
-                    First Year
-                  </option>
+                <div className="admin-field">
+                  <label>Upload Excel File <span>*</span></label>
+                  <input id="student-excel" type="file" accept=".xlsx,.xls" onChange={handleExcelChange} disabled={bulkLoading} />
+                  {excelFile && <p className="selected-photo">Selected: {excelFile.name}</p>}
+                </div>
 
-                  <option value="Second Year">
-                    Second Year
-                  </option>
+                <div className="admin-field">
+                  <label>Upload Student Photos ZIP <span>*</span></label>
+                  <input id="student-photos-zip" type="file" accept=".zip" onChange={handlePhotosZipChange} disabled={bulkLoading} />
+                  {photosZip && <p className="selected-photo">Selected: {photosZip.name}</p>}
+                </div>
 
-                  <option value="Third Year">
-                    Third Year
-                  </option>
+                {bulkMessage && (
+                  <div className={`admin-message ${bulkResult ? "bulk-success" : "bulk-error"}`}>
+                    {bulkMessage}
+                  </div>
+                )}
 
-                  <option value="Final Year">
-                    Final Year
-                  </option>
-                </select>
-              </div>
-
-              <div className="admin-field">
-                <label>
-                  Select Department
-                </label>
-
-                <select
-                  value={
-                    selectedDepartment
-                  }
-                  onChange={(e) =>
-                    setSelectedDepartment(
-                      e.target.value
-                    )
-                  }
-                  disabled={
-                    studentsLoading
-                  }
+                <button
+                  type="button"
+                  className="admin-add-btn bulk-upload-btn"
+                  onClick={handleBulkStudentUpload}
+                  disabled={bulkLoading || !excelFile || !photosZip}
                 >
-                  <option value="">
-                    All Departments
-                  </option>
-
-                  <option value="AIML">
-                    AIML
-                  </option>
-
-                  <option value="CSE">
-                    CSE
-                  </option>
-
-                  <option value="ENTC">
-                    ENTC
-                  </option>
-
-                  <option value="Mechanical">
-                    Mechanical
-                  </option>
-
-                  <option value="Civil">
-                    Civil
-                  </option>
-                </select>
+                  {bulkLoading ? "Registering Students..." : "Upload Excel & Register Students"}
+                </button>
               </div>
             </div>
+          )}
 
-            <div className="student-count">
-              {
-                studentsLoading
-                  ? "Loading students..."
-                  : `${students.length} student${
-                      students.length !== 1
-                        ? "s"
-                        : ""
-                    } found`
-              }
+          {/* ========================================================================= */}
+          {/* TAB 2: STUDENT DIRECTORY & BATCH RECORDS (INTERACTIVE FILTER & EDITOR)   */}
+          {/* ========================================================================= */}
+          {adminTab === "directory" && (
+            <div className="student-list-section" style={{ marginTop: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
+                <div className="admin-title" style={{ margin: 0 }}>
+                  👥 Student Directory & Batch Records
+                </div>
+                <button
+                  type="button"
+                  onClick={() => fetchStudents(selectedYear, selectedDepartment)}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "6px",
+                    background: "#f3f4f6",
+                    border: "1px solid #d1d5db",
+                    fontSize: "12px",
+                    fontWeight: "700",
+                    cursor: "pointer",
+                    color: "#374151"
+                  }}
+                >
+                  🔄 Refresh Directory
+                </button>
+              </div>
+
+              {/* Class, Department & Division Filter Bar */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", marginBottom: "16px", background: "#f8fafc", padding: "16px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "750", color: "#374151", marginBottom: "4px" }}>
+                    Select Class / Year:
+                  </label>
+                  <select
+                    value={selectedYear}
+                    onChange={(e) => setSelectedYear(e.target.value)}
+                    disabled={studentsLoading}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                  >
+                    <option value="">All Years (Entire College)</option>
+                    <option value="First Year">First Year</option>
+                    <option value="Second Year">Second Year</option>
+                    <option value="Third Year">Third Year</option>
+                    <option value="Final Year">Final Year</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "750", color: "#374151", marginBottom: "4px" }}>
+                    Select Department:
+                  </label>
+                  <select
+                    value={selectedDepartment}
+                    onChange={(e) => setSelectedDepartment(e.target.value)}
+                    disabled={studentsLoading}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                  >
+                    <option value="">All Departments</option>
+                    <option value="AIML">AIML</option>
+                    <option value="CSE">CSE</option>
+                    <option value="ENTC">ENTC</option>
+                    <option value="Mechanical">Mechanical</option>
+                    <option value="Civil">Civil</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "750", color: "#374151", marginBottom: "4px" }}>
+                    Select Division:
+                  </label>
+                  <select
+                    value={selectedDivision}
+                    onChange={(e) => setSelectedDivision(e.target.value)}
+                    disabled={studentsLoading}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                  >
+                    <option value="">All Divisions</option>
+                    <option value="A">Division A</option>
+                    <option value="B">Division B</option>
+                    <option value="C">Division C</option>
+                    <option value="D">Division D</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "750", color: "#374151", marginBottom: "4px" }}>
+                    Search Students:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="🔍 PRN, Name, or Email..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
+                  />
+                </div>
+              </div>
+
+              {/* Student Count Badge */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                <span style={{ fontSize: "13px", fontWeight: "750", color: "#1e3a8a" }}>
+                  {studentsLoading ? "Loading student records..." : `Showing ${
+                    students.filter((s: any) => {
+                      const matchesDiv = !selectedDivision || (s.division || "").toLowerCase() === selectedDivision.toLowerCase();
+                      const q = searchQuery.trim().toLowerCase();
+                      const matchesSearch = !q || (s.full_name || "").toLowerCase().includes(q) || (s.prn || "").toLowerCase().includes(q) || (s.email || "").toLowerCase().includes(q) || (s.phone || "").includes(q);
+                      return matchesDiv && matchesSearch;
+                    }).length
+                  } of ${students.length} students`}
+                </span>
+                <span style={{ fontSize: "12px", color: "#6b7280" }}>
+                  Click on any student row or card to inspect and edit details.
+                </span>
+              </div>
+
+              {studentListError && (
+                <div className="student-list-message" style={{ color: "#ef4444" }}>
+                  {studentListError}
+                </div>
+              )}
+
+              {studentsLoading ? (
+                <div className="student-list-message">
+                  Loading students from cloud database...
+                </div>
+              ) : students.length === 0 ? (
+                <div className="student-list-message">
+                  No students found matching the selected filters.
+                </div>
+              ) : (
+                <div className="student-table-container">
+                  <table className="student-table">
+                    <thead>
+                      <tr>
+                        <th>Photo</th>
+                        <th>PRN</th>
+                        <th>Full Name</th>
+                        <th>Class & Branch</th>
+                        <th>Div</th>
+                        <th>College Email</th>
+                        <th>Mobile</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {students
+                        .filter((s: any) => {
+                          const matchesDiv = !selectedDivision || (s.division || "").toLowerCase() === selectedDivision.toLowerCase();
+                          const q = searchQuery.trim().toLowerCase();
+                          const matchesSearch = !q || (s.full_name || "").toLowerCase().includes(q) || (s.prn || "").toLowerCase().includes(q) || (s.email || "").toLowerCase().includes(q) || (s.phone || "").includes(q);
+                          return matchesDiv && matchesSearch;
+                        })
+                        .map((student) => {
+                          const imgSrc = student.avatar_url || (student.face_folder && (student.face_folder.startsWith("data:") || student.face_folder.startsWith("http")) ? student.face_folder : null);
+                          return (
+                            <tr key={student.prn} style={{ cursor: "pointer" }} onClick={() => openStudentEditor(student)}>
+                              <td>
+                                {imgSrc ? (
+                                  <img
+                                    src={imgSrc}
+                                    alt={student.full_name}
+                                    style={{ width: "36px", height: "36px", borderRadius: "50%", objectFit: "cover", border: "1.5px solid #ffca08" }}
+                                  />
+                                ) : (
+                                  <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", fontWeight: "700", color: "#64748b" }}>
+                                    {(student.full_name || "S").charAt(0)}
+                                  </div>
+                                )}
+                              </td>
+                              <td><strong>{student.prn}</strong></td>
+                              <td>{student.full_name}</td>
+                              <td>{student.year} - {student.branch}</td>
+                              <td><span style={{ background: "#f1f5f9", padding: "2px 6px", borderRadius: "4px", fontWeight: "700" }}>{student.division}</span></td>
+                              <td>{student.email}</td>
+                              <td>{student.phone || "Not set"}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openStudentEditor(student);
+                                  }}
+                                  style={{
+                                    padding: "5px 10px",
+                                    background: "#ffca08",
+                                    color: "#000000",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                    fontWeight: "750",
+                                    fontSize: "12px",
+                                    cursor: "pointer",
+                                    boxShadow: "0 1px 4px rgba(255,202,8,0.3)"
+                                  }}
+                                >
+                                  👁️ View / Edit
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-
-            {studentListError && (
-              <div className="student-list-message" style={{ color: "#ef4444" }}>
-                {studentListError}
-              </div>
-            )}
-
-            {studentsLoading ? (
-              <div className="student-list-message">
-                Loading students...
-              </div>
-            ) : students.length === 0 ? (
-              <div className="student-list-message">
-                No students found.
-              </div>
-            ) : (
-              <div className="student-table-container">
-                <table className="student-table">
-                  <thead>
-                    <tr>
-                      <th>PRN</th>
-                      <th>Full Name</th>
-                      <th>Email</th>
-                      <th>Phone</th>
-                      <th>Year</th>
-                      <th>Department</th>
-                      <th>Division</th>
-                      <th>Gender</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {students.map(
-                      (student) => (
-                        <tr
-                          key={
-                            student.prn
-                          }
-                        >
-                          <td>
-                            {student.prn}
-                          </td>
-
-                          <td>
-                            {
-                              student.full_name
-                            }
-                          </td>
-
-                          <td>
-                            {
-                              student.email
-                            }
-                          </td>
-
-                          <td>
-                            {
-                              student.phone
-                            }
-                          </td>
-
-                          <td>
-                            {
-                              student.year
-                            }
-                          </td>
-
-                          <td>
-                            {
-                              student.branch
-                            }
-                          </td>
-
-                          <td>
-                            {
-                              student.division
-                            }
-                          </td>
-
-                          <td>
-                            {
-                              student.gender ||
-                              "-"
-                            }
-                          </td>
-                        </tr>
-                      )
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          )}
 
           <button
             className="admin-logout-btn"
             onClick={logout}
             disabled={loading}
+            style={{ marginTop: "20px" }}
           >
-            Logout
+            Logout from Admin Portal
           </button>
         </section>
       </main>
+
+      {/* ========================================================================= */}
+      {/* 📝 ADMIN STUDENT RECORD VIEWER & EDITOR MODAL                             */}
+      {/* ========================================================================= */}
+      {editingStudent && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.75)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999,
+          padding: "16px"
+        }}>
+          <div style={{
+            background: "#ffffff",
+            borderRadius: "16px",
+            maxWidth: "650px",
+            width: "100%",
+            maxHeight: "90vh",
+            overflowY: "auto",
+            boxShadow: "0 25px 50px rgba(0,0,0,0.35)",
+            border: "2px solid #ffca08"
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              background: "linear-gradient(135deg, #1e3a8a 0%, #0284c7 100%)",
+              padding: "18px 24px",
+              color: "#ffffff",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center"
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "18px", fontWeight: "800" }}>
+                  👤 Student Profile & Cloud Database Record
+                </h3>
+                <p style={{ margin: "2px 0 0 0", fontSize: "12px", opacity: 0.9 }}>
+                  PRN: {editingStudent.prn} | {editingStudent.full_name}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingStudent(null)}
+                style={{ background: "transparent", border: "none", color: "#ffffff", fontSize: "22px", cursor: "pointer" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body / Editor Form */}
+            <form onSubmit={handleSaveStudentChanges} style={{ padding: "20px 24px" }}>
+              {/* Photo & Quick Overview */}
+              <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "18px", background: "#f8fafc", padding: "14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <div style={{ position: "relative" }}>
+                  <img
+                    src={editPhotoPreview || "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"}
+                    alt={editingStudent.full_name}
+                    style={{ width: "80px", height: "80px", borderRadius: "50%", objectFit: "cover", border: "2.5px solid #ffca08" }}
+                  />
+                  <label
+                    htmlFor="edit-photo-input"
+                    style={{
+                      position: "absolute",
+                      bottom: 0,
+                      right: 0,
+                      background: "#ffca08",
+                      borderRadius: "50%",
+                      width: "26px",
+                      height: "26px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                      fontSize: "13px",
+                      boxShadow: "0 2px 5px rgba(0,0,0,0.2)"
+                    }}
+                    title="Change Photo"
+                  >
+                    📷
+                  </label>
+                  <input
+                    id="edit-photo-input"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleEditPhotoSelect}
+                    style={{ display: "none" }}
+                  />
+                </div>
+
+                <div style={{ flex: 1 }}>
+                  <h4 style={{ margin: "0 0 4px 0", fontSize: "16px", color: "#111827" }}>{editingStudent.full_name}</h4>
+                  <p style={{ margin: "0 0 4px 0", fontSize: "12px", color: "#4b5563" }}>
+                    <b>PRN:</b> {editingStudent.prn} &nbsp;|&nbsp; <b>Batch:</b> {editingStudent.year} ({editingStudent.branch} - Div {editingStudent.division})
+                  </p>
+                  <p style={{ margin: 0, fontSize: "11.5px", color: "#6b7280" }}>
+                    Click the camera icon to upload a new facial verification reference photo.
+                  </p>
+                </div>
+              </div>
+
+              {/* Editable Fields Grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                    Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editForm.full_name}
+                    onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                    Student PRN (Primary ID - Fixed)
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={editForm.prn}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", background: "#f1f5f9", color: "#64748b", fontSize: "13px", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                    College Email *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                    Reset Account Password (leave blank to keep current)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter new password (optional)"
+                    value={editForm.password}
+                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                    Student Mobile Number *
+                  </label>
+                  <input
+                    type="tel"
+                    required
+                    value={editForm.phone}
+                    onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                    Parent / Emergency Phone
+                  </label>
+                  <input
+                    type="tel"
+                    value={editForm.parent_phone}
+                    onChange={(e) => setEditForm({ ...editForm, parent_phone: e.target.value })}
+                    placeholder="Emergency mobile"
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                    Class / Year *
+                  </label>
+                  <select
+                    value={editForm.year}
+                    onChange={(e) => setEditForm({ ...editForm, year: e.target.value })}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                  >
+                    <option value="First Year">First Year</option>
+                    <option value="Second Year">Second Year</option>
+                    <option value="Third Year">Third Year</option>
+                    <option value="Final Year">Final Year</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                    Branch / Department *
+                  </label>
+                  <select
+                    value={editForm.branch}
+                    onChange={(e) => setEditForm({ ...editForm, branch: e.target.value })}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                  >
+                    <option value="AIML">AIML</option>
+                    <option value="CSE">CSE</option>
+                    <option value="ENTC">ENTC</option>
+                    <option value="Mechanical">Mechanical</option>
+                    <option value="Civil">Civil</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                    Division *
+                  </label>
+                  <select
+                    value={editForm.division}
+                    onChange={(e) => setEditForm({ ...editForm, division: e.target.value })}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                  >
+                    <option value="A">Division A</option>
+                    <option value="B">Division B</option>
+                    <option value="C">Division C</option>
+                    <option value="D">Division D</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                    Blood Group
+                  </label>
+                  <select
+                    value={editForm.blood_group}
+                    onChange={(e) => setEditForm({ ...editForm, blood_group: e.target.value })}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                  >
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#374151", marginBottom: "4px" }}>
+                  Residential Address
+                </label>
+                <textarea
+                  rows={2}
+                  value={editForm.address}
+                  onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                  placeholder="Student permanent / hostel address"
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
+                />
+              </div>
+
+              {editMsg && (
+                <div style={{
+                  padding: "10px 12px",
+                  borderRadius: "7px",
+                  fontSize: "12.5px",
+                  fontWeight: "600",
+                  marginBottom: "16px",
+                  background: editMsg.startsWith("✅") ? "#f0fdf4" : "#fef2f2",
+                  color: editMsg.startsWith("✅") ? "#166534" : "#991b1b",
+                  border: `1px solid ${editMsg.startsWith("✅") ? "#86efac" : "#fca5a5"}`
+                }}>
+                  {editMsg}
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteStudent(editingStudent.prn, editingStudent.full_name)}
+                  disabled={editLoading}
+                  style={{
+                    padding: "10px 16px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: "#fee2e2",
+                    color: "#dc2626",
+                    fontWeight: "750",
+                    fontSize: "13px",
+                    cursor: "pointer"
+                  }}
+                >
+                  🗑️ Delete Student
+                </button>
+
+                <div style={{ flex: 1 }} />
+
+                <button
+                  type="button"
+                  onClick={() => setEditingStudent(null)}
+                  style={{
+                    padding: "10px 16px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    background: "#f3f4f6",
+                    color: "#374151",
+                    fontWeight: "700",
+                    fontSize: "13px",
+                    cursor: "pointer"
+                  }}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={editLoading}
+                  style={{
+                    padding: "10px 22px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: "#ffca08",
+                    color: "#000000",
+                    fontWeight: "800",
+                    fontSize: "13.5px",
+                    cursor: "pointer",
+                    boxShadow: "0 2px 8px rgba(255,202,8,0.3)"
+                  }}
+                >
+                  {editLoading ? "Saving to Cloud DB..." : "💾 Save Changes to Database"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Admin Password Change Modal */}
       {showAdminPassModal && (
