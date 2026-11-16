@@ -297,7 +297,7 @@ def build_pdf(filename):
             Paragraph("<b>Administrator</b>", table_cell_style),
             Paragraph("<code>admin@ritindia.edu</code><br/>(or <code>ADM001</code>)", table_cell_style),
             Paragraph("<code>Admin@1234</code><br/>(or <code>Password123</code>)", table_cell_style),
-            Paragraph("<b>College IT Administration</b><br/>2-Tab student directory, batch records, student CRUD editor.", table_cell_style)
+            Paragraph("<b>College IT Administration</b><br/>3-Tab institutional portal: Student directory & batch records, student enrollment, and faculty & admin management with full CRUD controls.", table_cell_style)
         ]
     ]
     creds_table = Table(creds_data, colWidths=[90, 140, 95, 207])
@@ -435,7 +435,11 @@ def build_pdf(filename):
         body_style
     ))
     story.append(Paragraph(
-        "• <b>2-Tab Batch Directory:</b> Tab 1 (<code>👥 Student Directory & Class Batch Records</code>) offers real-time filtering by Class/Year (First Year, Second Year, Third Year, Final Year), Department (AIML, CSE, etc.), Division (A, B, C, D), and live keyword search. Tab 2 (<code>➕ Enroll & Add Students</code>) supports single registration and bulk Excel/ZIP onboarding.",
+        "• <b>3-Tab Institutional Administration Portal:</b> Tab 1 (<code>👥 Student Directory & Class Batch Records</code>) offers real-time filtering by Class/Year (First Year, Second Year, Third Year, Final Year), Department (AIML, CSE, etc.), Division (A, B, C, D), and live keyword search. Tab 2 (<code>➕ Enroll & Add Students</code>) supports single manual enrollment and bulk Excel/ZIP onboarding. Tab 3 (<code>🛡️ Manage Faculty & Admins</code>) allows adding new faculty members and administrators, plus viewing/deleting existing staff in live cloud database tables.",
+        bullet_style
+    ))
+    story.append(Paragraph(
+        "• <b>Universal Multi-Role Self-Registration:</b> The login portal features dynamic, role-specific onboarding buttons for all user tiers: <code>🎓 New Student? Register yourself here</code>, <code>👨‍🏫 New Faculty / Teacher? Register yourself here</code>, and <code>🛡️ New Administrator? Register new admin here</code>, creating instantaneous credentials directly in Supabase Cloud.",
         bullet_style
     ))
     story.append(Paragraph(
@@ -480,7 +484,7 @@ def build_pdf(filename):
         ],
         [
             Paragraph("<code>frontend/src/pages/<br/>admin/Dashboard.tsx</code>", table_cell_style),
-            Paragraph("Administrative hub featuring 2-Tab batch directory, Class/Year/Branch filters, student search, single/bulk enrollment, and modal profile CRUD editor.", table_cell_style)
+            Paragraph("Administrative hub featuring 3-Tab architecture: student directory & batch records, single/bulk student enrollment, and faculty & admin creation/management with live tables.", table_cell_style)
         ],
         [
             Paragraph("<code>frontend/src/services/<br/>supabase.ts</code>", table_cell_style),

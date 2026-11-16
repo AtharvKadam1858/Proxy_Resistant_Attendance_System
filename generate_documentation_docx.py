@@ -386,11 +386,11 @@ sections = [
     },
     {
         "type": "heading2",
-        "text": "4.10 Admin Portal 2-Tab Batch Directory & Live Student CRUD Editor"
+        "text": "4.10 Admin Portal 3-Tab Architecture & Multi-Role User Management"
     },
     {
         "type": "paragraph",
-        "text": "The Administrative Control Portal provides college administrators with deep visibility and management controls:"
+        "text": "The Administrative Control Portal provides college administrators with comprehensive institutional controls across students, faculty, and administrative staff:"
     },
     {
         "type": "bullet",
@@ -401,6 +401,16 @@ sections = [
         "type": "bullet",
         "bold": "Tab 2: Enroll & Add Students (Manual & Bulk Upload)",
         "text": "Supports single-student registration with profile photo upload or bulk batch onboarding via Excel/CSV spreadsheets and ZIP archives."
+    },
+    {
+        "type": "bullet",
+        "bold": "Tab 3: Manage Faculty & Admins (Staff Directory & Creation)",
+        "text": "Empowers administrators to register new teachers (Teacher ID, Name, Email, Phone, Department, Designation, Password) and new administrators (Admin ID, Name, Email, Password). Features live cloud database tables for all faculty and administrators with one-click deletion/management controls."
+    },
+    {
+        "type": "bullet",
+        "bold": "Universal Multi-Role Self-Registration on Login Portal",
+        "text": "The login page dynamically adapts its registration options based on the active role tab: New Student (Instant Enrollment), New Faculty / Teacher, and New Administrator, providing streamlined account creation for all university stakeholders."
     },
     {
         "type": "bullet",
