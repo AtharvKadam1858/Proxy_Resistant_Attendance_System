@@ -102,6 +102,7 @@ export default function Dashboard() {
 
   const [sessionId, setSessionId] = useState("");
   const [qrToken, setQrToken] = useState("");
+  const [classroomPin, setClassroomPin] = useState("");
 
   const [liveAttendance, setLiveAttendance] =
     useState<any[]>([]);
@@ -211,6 +212,9 @@ export default function Dashboard() {
             });
             currentSession = result.session_id;
             currentQrToken = result.qr_token;
+            if (result.classroom_pin) {
+              setClassroomPin(result.classroom_pin);
+            }
           } catch (cloudErr) {
             console.warn("Direct Supabase start session fallback to API:", cloudErr);
             const response = await fetch(`${API_URL}/attendance/start`, {
@@ -748,12 +752,51 @@ export default function Dashboard() {
           </p>
 
           {attendanceActive ? (
-            <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
-                qrToken
-              )}&t=${Date.now()}`}
-              alt="QR Code"
-            />
+            <>
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+                  JSON.stringify({
+                    token: qrToken,
+                    pin: classroomPin,
+                    session_id: sessionId,
+                  })
+                )}&t=${Date.now()}`}
+                alt="QR Code"
+              />
+
+              {/* Classroom Geofencing & Anti-Proxy PIN Badge */}
+              <div
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #86efac",
+                  borderRadius: "8px",
+                  padding: "10px",
+                  marginTop: "12px",
+                  textAlign: "center",
+                }}
+              >
+                <p style={{ margin: 0, fontSize: "11px", color: "#166534", fontWeight: "750" }}>
+                  📍 CLASSROOM GEOFENCE: 60M PERIMETER ACTIVE
+                </p>
+                <p style={{ margin: "4px 0", fontSize: "16px", color: "#14532d", fontWeight: "800" }}>
+                  🔑 Live Classroom PIN:{" "}
+                  <span
+                    style={{
+                      background: "#ffffff",
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      border: "1px solid #166534",
+                      letterSpacing: "3px",
+                    }}
+                  >
+                    {classroomPin || "----"}
+                  </span>
+                </p>
+                <span style={{ fontSize: "11px", color: "#15803d" }}>
+                  (Students on lower floors cannot see this PIN & cannot proxy)
+                </span>
+              </div>
+            </>
           ) : (
             <p
               style={{
@@ -821,48 +864,29 @@ export default function Dashboard() {
                 <tr>
                   <th>PRN</th>
                   <th>Name</th>
+                  <th>Proximity</th>
                   <th>Time</th>
                 </tr>
               </thead>
 
               <tbody>
-                {liveAttendance.length ===
-                0 ? (
+                {liveAttendance.length === 0 ? (
                   <tr>
-                    <td colSpan={3}>
-                      Waiting for
-                      students...
-                    </td>
+                    <td colSpan={4}>Waiting for students...</td>
                   </tr>
                 ) : (
-                  liveAttendance.map(
-                    (
-                      student,
-                      index
-                    ) => (
-                      <tr
-                        key={index}
-                      >
-                        <td>
-                          {
-                            student.prn
-                          }
-                        </td>
-
-                        <td>
-                          {
-                            student.student_name
-                          }
-                        </td>
-
-                        <td>
-                          {
-                            student.attendance_time
-                          }
-                        </td>
-                      </tr>
-                    )
-                  )
+                  liveAttendance.map((student, index) => (
+                    <tr key={index}>
+                      <td>{student.prn}</td>
+                      <td>{student.student_name}</td>
+                      <td style={{ color: "#166534", fontWeight: "700" }}>
+                        {student.distance_meters !== null && student.distance_meters !== undefined
+                          ? `📍 ${student.distance_meters}m`
+                          : "📍 Verified Room"}
+                      </td>
+                      <td>{student.attendance_time}</td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>

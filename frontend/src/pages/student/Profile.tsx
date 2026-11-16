@@ -7,6 +7,8 @@ import {
   updateStudentProfilePhoto,
   updateStudentEducation,
   updateUserPassword,
+  applyStudentLeave,
+  getStudentAttendanceHistory,
 } from "../../services/supabase";
 import ritLogo from "../../assets/RIT_logo.jpeg";
 
@@ -52,6 +54,17 @@ export default function Profile() {
   const [changingPass, setChangingPass] = useState(false);
   const [passMsg, setPassMsg] = useState("");
 
+  // 📊 Attendance & University Exam Eligibility State
+  const [attendanceStats, setAttendanceStats] = useState<{ total: number; present: number; percentage: number } | null>(null);
+
+  // 🏥 Medical / OD Leave Application State
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [leaveType, setLeaveType] = useState("Medical / Sick Leave");
+  const [leaveDate, setLeaveDate] = useState(new Date().toISOString().split("T")[0]);
+  const [leaveReason, setLeaveReason] = useState("");
+  const [submittingLeave, setSubmittingLeave] = useState(false);
+  const [leaveMsg, setLeaveMsg] = useState("");
+
   useEffect(() => {
     const loadProfile = async () => {
       try {
@@ -91,6 +104,16 @@ export default function Profile() {
         }
         if (studentData.resume_headline) {
           setCareerObjective(studentData.resume_headline);
+        }
+
+        // Fetch Attendance Summary for University Exam Eligibility
+        try {
+          const history = await getStudentAttendanceHistory(prn);
+          if (history && history.summary) {
+            setAttendanceStats(history.summary);
+          }
+        } catch (attErr) {
+          console.warn("Attendance summary load warning:", attErr);
         }
 
         setLoading(false);
@@ -233,6 +256,30 @@ export default function Profile() {
     }
   };
 
+  const handleApplyLeave = async () => {
+    if (!student || !leaveReason.trim()) {
+      alert("Please enter the reason for your leave request.");
+      return;
+    }
+    try {
+      setSubmittingLeave(true);
+      setLeaveMsg("");
+      await applyStudentLeave({
+        prn: student.prn,
+        leave_type: leaveType,
+        leave_date: leaveDate,
+        reason: leaveReason.trim(),
+      });
+      setLeaveMsg("✅ Leave application submitted to faculty for verification!");
+      setLeaveReason("");
+      setTimeout(() => setShowLeaveModal(false), 2000);
+    } catch (e: any) {
+      setLeaveMsg("❌ " + (e?.message || "Failed to submit leave application."));
+    } finally {
+      setSubmittingLeave(false);
+    }
+  };
+
   const logout = () => {
     localStorage.clear();
     window.location.href = "/";
@@ -339,6 +386,58 @@ export default function Profile() {
             </p>
           </div>
         </div>
+
+        {/* University Exam Eligibility & Defaulter Status */}
+        {attendanceStats !== null && (
+          <div
+            style={{
+              margin: "16px 20px 0 20px",
+              padding: "12px 16px",
+              borderRadius: "10px",
+              background: attendanceStats.percentage >= 75 ? "#f0fdf4" : "#fef2f2",
+              border: `1px solid ${attendanceStats.percentage >= 75 ? "#86efac" : "#fca5a5"}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "10px",
+            }}
+          >
+            <div>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "13px",
+                  fontWeight: "800",
+                  color: attendanceStats.percentage >= 75 ? "#166534" : "#991b1b",
+                }}
+              >
+                {attendanceStats.percentage >= 75
+                  ? `🎓 University Exam Status: ELIGIBLE (${attendanceStats.percentage}% Attendance)`
+                  : `⚠️ University Defaulter Alert: ${attendanceStats.percentage}% (< 75% Requirement)`}
+              </p>
+              <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#4b5563" }}>
+                Attended: <b>{attendanceStats.present}</b> / {attendanceStats.total} total lectures
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowLeaveModal(true)}
+              style={{
+                background: "#ffffff",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                padding: "6px 12px",
+                fontSize: "12px",
+                fontWeight: "750",
+                color: "#1e3a8a",
+                cursor: "pointer",
+              }}
+            >
+              🏥 Apply for Leave / OD
+            </button>
+          </div>
+        )}
 
         {/* Quick Actions (Scan QR & Attendance) */}
         <div
@@ -874,6 +973,149 @@ export default function Profile() {
                 }}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🏥 MEDICAL / DUTY EXEMPTION (OD) LEAVE MODAL */}
+      {showLeaveModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0,0,0,0.65)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "16px",
+            boxSizing: "border-box",
+          }}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "12px",
+              maxWidth: "480px",
+              width: "100%",
+              padding: "24px",
+              boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
+              boxSizing: "border-box",
+            }}
+          >
+            <h3 style={{ margin: "0 0 10px 0", color: "#111827", fontSize: "17px" }}>
+              🏥 Student Leave / Duty Exemption (OD)
+            </h3>
+            <p style={{ margin: "0 0 14px 0", fontSize: "13px", color: "#6b7280" }}>
+              Submit an official leave request to faculty for attendance exemption.
+            </p>
+
+            <div style={{ marginBottom: "12px" }}>
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650", display: "block", marginBottom: "4px" }}>
+                Select Leave Category
+              </label>
+              <select
+                value={leaveType}
+                onChange={(e) => setLeaveType(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  boxSizing: "border-box",
+                  fontSize: "14px",
+                }}
+              >
+                <option value="Medical / Sick Leave">Medical / Sick Leave</option>
+                <option value="Placement Drive OD">Placement Drive OD (Campus Recruitment)</option>
+                <option value="College Sports OD">College Sports OD (Inter-College Tournament)</option>
+                <option value="Technical Symposium OD">Technical Symposium / Hackathon OD</option>
+                <option value="Emergency Personal Leave">Emergency Personal Leave</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: "12px" }}>
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650", display: "block", marginBottom: "4px" }}>
+                Date of Absence
+              </label>
+              <input
+                type="date"
+                value={leaveDate}
+                onChange={(e) => setLeaveDate(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  boxSizing: "border-box",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: "12px" }}>
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650", display: "block", marginBottom: "4px" }}>
+                Reason & Details
+              </label>
+              <textarea
+                rows={3}
+                placeholder="Explain the reason for absence (e.g. Attending TCS placement interview, Medical illness with doctor prescription submitted to department)"
+                value={leaveReason}
+                onChange={(e) => setLeaveReason(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  boxSizing: "border-box",
+                  fontFamily: "inherit",
+                  fontSize: "13px",
+                }}
+              />
+            </div>
+
+            {leaveMsg && (
+              <p style={{ margin: "8px 0", fontSize: "13px", fontWeight: "650" }}>{leaveMsg}</p>
+            )}
+
+            <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+              <button
+                type="button"
+                onClick={handleApplyLeave}
+                disabled={submittingLeave}
+                style={{
+                  flex: 1,
+                  background: "#0284c7",
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: "7px",
+                  padding: "10px",
+                  fontWeight: "750",
+                  cursor: "pointer",
+                }}
+              >
+                {submittingLeave ? "Submitting..." : "Submit to Faculty"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowLeaveModal(false)}
+                style={{
+                  flex: 1,
+                  background: "#f3f4f6",
+                  color: "#374151",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "7px",
+                  padding: "10px",
+                  fontWeight: "700",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
               </button>
             </div>
           </div>

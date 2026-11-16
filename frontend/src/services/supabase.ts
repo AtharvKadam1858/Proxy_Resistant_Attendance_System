@@ -183,6 +183,23 @@ export async function getTeacherProfile(teacherIdOrEmail: string) {
   return data[0];
 }
 
+export function calculateHaversineDistanceMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const R = 6371e3; // Earth radius in meters
+  const toRad = (x: number) => (x * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
 // ---------------------------------------------------------------------
 // 2. TEACHER ATTENDANCE SESSION MANAGEMENT
 // ---------------------------------------------------------------------
@@ -197,6 +214,7 @@ export async function startAttendanceSession(params: {
 }) {
   const sessionId = crypto.randomUUID();
   const qrToken = crypto.randomUUID();
+  const classroomPin = Math.floor(1000 + Math.random() * 9000).toString();
   const now = new Date();
   const todayStr = now.toISOString().split("T")[0];
   const timeStr = now.toTimeString().split(" ")[0];
@@ -204,6 +222,7 @@ export async function startAttendanceSession(params: {
   const payload = {
     session_id: sessionId,
     qr_token: qrToken,
+    classroom_pin: classroomPin,
     teacher_id: params.teacher_id,
     subject: params.subject,
     department: params.department,
@@ -225,6 +244,7 @@ export async function startAttendanceSession(params: {
     success: true,
     session_id: sessionId,
     qr_token: qrToken,
+    classroom_pin: classroomPin,
   };
 }
 
@@ -326,11 +346,28 @@ export async function markStudentPresent(sessionId: string, prn: string, teacher
 // 3. STUDENT QR VERIFICATION & ATTENDANCE
 // ---------------------------------------------------------------------
 
-export async function verifySessionQR(qrToken: string) {
-  // Find active session matching qrToken
+export async function verifySessionQR(
+  rawQrInput: string,
+  studentLat?: number,
+  studentLng?: number,
+  enteredPin?: string
+) {
+  let token = rawQrInput.trim();
+  let payloadPin: string | null = null;
+
+  // Check if QR code is JSON containing token & pin
+  try {
+    if (token.startsWith("{") && token.endsWith("}")) {
+      const parsed = JSON.parse(token);
+      if (parsed.token) token = parsed.token;
+      if (parsed.pin) payloadPin = parsed.pin;
+    }
+  } catch {}
+
+  // 1. Find active session matching qr_token
   const sessions = await supabaseQuery(
     `attendance_sessions?qr_token=eq.${encodeURIComponent(
-      qrToken
+      token
     )}&status=eq.ACTIVE&limit=1`
   );
 
@@ -341,14 +378,70 @@ export async function verifySessionQR(qrToken: string) {
     };
   }
 
+  const session = sessions[0];
+
+  // 2. Strict Geofencing Verification (Max 60 meters classroom radius)
+  let distanceMeters: number | null = null;
+  if (
+    session.lat !== null &&
+    session.lng !== null &&
+    studentLat !== undefined &&
+    studentLng !== undefined &&
+    !isNaN(studentLat) &&
+    !isNaN(studentLng)
+  ) {
+    distanceMeters = calculateHaversineDistanceMeters(
+      Number(session.lat),
+      Number(session.lng),
+      Number(studentLat),
+      Number(studentLng)
+    );
+
+    if (distanceMeters > 60) {
+      return {
+        success: false,
+        message: `❌ Classroom Proximity Violation: You are ${distanceMeters}m away from the classroom (Allowed limit: 60m). You must be physically inside the class.`,
+        distance: distanceMeters,
+      };
+    }
+  }
+
+  // 3. Physical Classroom Eye-Contact PIN Verification (Prevents cross-floor cheating)
+  if (session.classroom_pin) {
+    const candidatePin = payloadPin || enteredPin?.trim();
+    if (!candidatePin) {
+      return {
+        success: false,
+        require_pin: true,
+        session_id: session.session_id,
+        session: session,
+        message: "Please enter the 4-digit Classroom PIN displayed on the Professor's projector screen.",
+      };
+    }
+    if (candidatePin !== session.classroom_pin) {
+      return {
+        success: false,
+        require_pin: true,
+        session_id: session.session_id,
+        session: session,
+        message: "❌ Incorrect Classroom PIN. Enter the current PIN displayed on the blackboard/projector.",
+      };
+    }
+  }
+
   return {
     success: true,
-    session_id: sessions[0].session_id,
-    session: sessions[0],
+    session_id: session.session_id,
+    session: session,
+    distance_meters: distanceMeters,
   };
 }
 
-export async function markAttendanceForStudent(sessionId: string, prn: string) {
+export async function markAttendanceForStudent(
+  sessionId: string,
+  prn: string,
+  distanceMeters?: number | null
+) {
   const sessions = await supabaseQuery(
     `attendance_sessions?session_id=eq.${sessionId}&limit=1`
   );
@@ -385,7 +478,7 @@ export async function markAttendanceForStudent(sessionId: string, prn: string) {
     };
   }
 
-  // Record attendance
+  // Record attendance with physical distance telemetry
   const record = {
     session_id: sessionId,
     teacher_id: session.teacher_id,
@@ -397,6 +490,7 @@ export async function markAttendanceForStudent(sessionId: string, prn: string) {
     attendance_date: session.lecture_date,
     attendance_time: new Date().toISOString(),
     status: "Present",
+    distance_meters: distanceMeters ?? null,
   };
 
   await supabaseQuery("attendance", {
@@ -411,7 +505,43 @@ export async function markAttendanceForStudent(sessionId: string, prn: string) {
     message: "Attendance marked successfully!",
     prn,
     name: student.full_name,
+    distance_meters: distanceMeters,
   };
+}
+
+export async function applyStudentLeave(params: {
+  prn: string;
+  leave_type: string;
+  leave_date: string;
+  reason: string;
+}) {
+  const students = await supabaseQuery(`students?prn=eq.${encodeURIComponent(params.prn)}&limit=1`);
+  if (!students || students.length === 0) {
+    throw new Error("Student not found.");
+  }
+  const student = students[0];
+
+  const payload = {
+    session_id: `LEAVE_${params.prn}_${Date.now()}`,
+    prn: params.prn,
+    student_name: student.full_name,
+    department: student.branch,
+    year: student.year,
+    subject: "Leave / Duty Exemption",
+    attendance_date: params.leave_date,
+    attendance_time: new Date().toISOString(),
+    status: "Leave",
+    leave_type: params.leave_type,
+    leave_comment: params.reason,
+    leave_verified: 0,
+  };
+
+  await supabaseQuery("attendance", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+  return { success: true, message: "Leave application submitted to faculty for verification!" };
 }
 
 export async function getStudentAttendanceHistory(prn: string) {

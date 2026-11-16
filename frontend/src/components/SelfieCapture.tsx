@@ -7,6 +7,7 @@ type Props = {
   onVerified: (name: string) => void;
   onFailed: () => void;
   autoCapture?: boolean;
+  distanceMeters?: number | null;
 };
 
 export default function SelfieCapture({
@@ -14,6 +15,7 @@ export default function SelfieCapture({
   onVerified,
   onFailed,
   autoCapture = true,
+  distanceMeters = null,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -463,7 +465,7 @@ export default function SelfieCapture({
           );
 
           try {
-            const cloudResult = await markAttendanceForStudent(sessionId, prn);
+            const cloudResult = await markAttendanceForStudent(sessionId, prn, distanceMeters);
             stopCamera();
             onVerified(cloudResult.name || prn);
             return;

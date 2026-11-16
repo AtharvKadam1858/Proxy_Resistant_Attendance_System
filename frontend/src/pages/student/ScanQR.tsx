@@ -15,6 +15,7 @@ export default function ScanQR() {
   const [verifying, setVerifying] = useState(false);
   const [cameras, setCameras] = useState<Array<{ id: string; label: string }>>([]);
   const [activeCamIndex, setActiveCamIndex] = useState(0);
+  const [verifiedDistance, setVerifiedDistance] = useState<number | null>(null);
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannedRef = useRef(false);
@@ -175,11 +176,24 @@ export default function ScanQR() {
               }
             } catch {}
 
-            // 2. Direct Cloud Database (Supabase) Instant Verification
+            // 2. Direct Cloud Database (Supabase) Instant Geofencing & Classroom PIN Verification
             if (!verifiedSessionId) {
-              const cloudVerify = await verifySessionQR(currentQrToken);
+              let enteredPin = "";
+              let cloudVerify = await verifySessionQR(currentQrToken, lat, lng);
+
+              // If session enforces classroom PIN (to prevent cross-floor cheating), prompt for PIN
+              if (!cloudVerify.success && cloudVerify.require_pin) {
+                enteredPin = prompt(cloudVerify.message) || "";
+                if (enteredPin) {
+                  cloudVerify = await verifySessionQR(currentQrToken, lat, lng, enteredPin);
+                }
+              }
+
               if (cloudVerify.success && cloudVerify.session_id) {
                 verifiedSessionId = cloudVerify.session_id;
+                if (cloudVerify.distance_meters !== null && cloudVerify.distance_meters !== undefined) {
+                  setVerifiedDistance(cloudVerify.distance_meters);
+                }
               } else {
                 alert(cloudVerify.message || "Invalid or expired QR code.");
                 scannedRef.current = false;
@@ -367,8 +381,10 @@ export default function ScanQR() {
           <SelfieCapture
             sessionId={sessionId}
             autoCapture={true}
+            distanceMeters={verifiedDistance}
             onVerified={() => {
-              alert("✅ Attendance Marked Successfully!");
+              const distText = verifiedDistance !== null ? ` (Location: ${verifiedDistance}m from Professor)` : "";
+              alert(`✅ Attendance Marked Successfully!${distText}`);
               setShowSelfie(false);
               navigate("/profile");
             }}
