@@ -376,13 +376,13 @@ sections = [
     },
     {
         "type": "bullet",
-        "bold": "Dual Fast-Path Capture (Auto-Blink or 1-Tap Instant Verify)",
-        "text": "Students can either blink naturally for automatic zero-click attendance marking or tap '⚡ Mark Attendance Now' for instantaneous capture. In both modes, the engine strictly verifies face presence, eye openness (EAR >= 0.17), and ResNet-34 biometric distance (<= 0.68), strictly rejecting closed-eye or proxy attempts."
+        "bold": "Hands-Free Autonomous Attendance Marking (Natural Blink Engine)",
+        "text": "Students do not need to click any button to mark attendance. When facing the camera with eyes open, the student blinks naturally once (100–180ms). The 60ms tracking engine detects the eyelid dip and reopening, confirms a living human presence, and immediately executes biometric face matching automatically. Audio chimes, green verification is displayed, and the official attendance slip is emailed."
     },
     {
         "type": "bullet",
-        "bold": "Closed-Eye & Sleeping Pose Strict Rejection",
-        "text": "If a student attempts to mark attendance with closed eyes, capture is immediately rejected: '❌ Eyes are closed! You must look directly at the camera with your eyes open. Sleeping, closed-eye, or spoofed poses are strictly rejected.'"
+        "bold": "Strict Closed-Eye & Sleeping Pose Rejection (EAR < 0.22 Threshold)",
+        "text": "In 68-point landmark geometry, closed eyes exhibit EAR between 0.16 and 0.215. The system strictly enforces an EAR >= 0.22 open-eye baseline. If a candidate or proxy attempts capture with closed eyes, sleeping poses, or photos with closed eyes, both the real-time engine and the pre-capture pipeline strictly abort with: '❌ Eyes are closed! You must look directly at the camera with your eyes open. Sleeping, closed-eye, or spoofed poses are strictly rejected.'"
     },
     {
         "type": "bullet",

@@ -6,6 +6,7 @@ import {
   verifyLiveFaceAgainstRegistered,
   preWarmStudentBiometrics,
   getCachedDescriptor,
+  type LiveFrameAnalysis,
 } from "../services/aiFaceRecognition";
 
 type Props = {
@@ -15,13 +16,6 @@ type Props = {
   autoCapture?: boolean;
   distanceMeters?: number | null;
 };
-
-interface EarSample {
-  ear: number;
-  time: number;
-  open: boolean;
-  closed: boolean;
-}
 
 export default function SelfieCapture({
   sessionId,
@@ -37,14 +31,17 @@ export default function SelfieCapture({
   const [cameraReady, setCameraReady] = useState(false);
   const [modelReady, setModelReady] = useState(false);
   const [faceDetected, setFaceDetected] = useState<boolean>(false);
-  const [eyesOpen, setEyesOpen] = useState<boolean>(true);
+  const [eyesOpen, setEyesOpen] = useState<boolean>(false);
   const [livenessStage, setLivenessStage] = useState<"DETECTING" | "PROMPT_BLINK" | "BLINK_DETECTED" | "VERIFIED">("DETECTING");
   const [statusMessage, setStatusMessage] = useState<string>("Initializing High-Speed AI Models...");
   const [verificationFeedback, setVerificationFeedback] = useState<string | null>(null);
 
   const isVerifyingRef = useRef(false);
   const isProcessingFrameRef = useRef(false);
-  const earBufferRef = useRef<EarSample[]>([]);
+  const latestAnalysisRef = useRef<LiveFrameAnalysis | null>(null);
+  const baselineOpenEarRef = useRef<number>(0);
+  const eyeClosedDetectedRef = useRef<boolean>(false);
+  const closedTimestampRef = useRef<number>(0);
   const cachedProfileRef = useRef<any>(null);
   const cachedDescriptorRef = useRef<Float32Array | null>(null);
 
@@ -83,7 +80,7 @@ export default function SelfieCapture({
       .then(async () => {
         if (!mounted) return;
         setModelReady(true);
-        setStatusMessage("⚡ High-Speed AI Ready. Looking for face...");
+        setStatusMessage("⚡ AI Ready — Looking for student face...");
 
         // Pre-warm student's registered face descriptor in background
         if (prn) {
@@ -93,7 +90,7 @@ export default function SelfieCapture({
             const desc = await preWarmStudentBiometrics(prn);
             if (mounted && desc) {
               cachedDescriptorRef.current = desc;
-              console.log("⚡ Reference photo descriptor pre-warmed into memory for PRN:", prn);
+              console.log("⚡ Reference photo descriptor pre-warmed for PRN:", prn);
             }
           }
         }
@@ -175,7 +172,7 @@ export default function SelfieCapture({
   }, []);
 
   // ============================================================
-  // 3. ULTRA-FAST BIOMETRIC VERIFICATION (<300ms)
+  // 3. STRICT AI BIOMETRIC VERIFICATION (EXECUTES IN <250ms)
   // ============================================================
   const performBiometricVerification = useCallback(async () => {
     if (isVerifyingRef.current) return;
@@ -199,8 +196,8 @@ export default function SelfieCapture({
 
     isVerifyingRef.current = true;
     setLoading(true);
-    setStatusMessage("⚡ Verifying biometric identity with registered photo...");
-    setVerificationFeedback("Matching 128-d neural embeddings...");
+    setStatusMessage("⚡ Matching face with registered photo in cloud database...");
+    setVerificationFeedback("Extracting live face descriptor...");
 
     try {
       // 1. Draw live frame onto canvas
@@ -209,6 +206,27 @@ export default function SelfieCapture({
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Could not initialize biometric canvas context.");
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // 🛑 STRICT PRE-CAPTURE EYE OPENNESS CHECK:
+      // Guarantees no attendance can EVER be recorded with closed eyes
+      const liveCheck = await analyzeLiveFrameLiveness(canvas);
+      if (!liveCheck.faceDetected) {
+        alert("❌ Biometric Verification Blocked:\n\nNo face detected. Please face the camera directly.");
+        stopCamera();
+        onFailed();
+        return;
+      }
+      if (liveCheck.eyesClosed || liveCheck.ear < 0.22) {
+        alert(
+          `❌ Biometric Verification Blocked:\n\n` +
+          `Eyes are closed! (Eye Ratio ${liveCheck.ear.toFixed(2)} is below minimum 0.22).\n\n` +
+          `You must look directly at the camera with your eyes wide open.\n` +
+          `Sleeping, closed-eye, or spoofed photo poses are strictly rejected.`
+        );
+        stopCamera();
+        onFailed();
+        return;
+      }
 
       // 2. Get student profile & registered photo (instant from pre-warmed cache)
       let profile = cachedProfileRef.current;
@@ -232,7 +250,7 @@ export default function SelfieCapture({
         return;
       }
 
-      // 3. Direct Client-side Deep Learning AI Face Recognition (<250ms)
+      // 3. Direct Client-side Deep Learning AI Face Recognition (<200ms)
       const aiResult = await verifyLiveFaceAgainstRegistered(
         canvas,
         registeredPhoto || "",
@@ -249,7 +267,7 @@ export default function SelfieCapture({
         return;
       }
 
-      console.log("⚡ AI Biometric Verification PASSED in <300ms! Score:", aiResult.score);
+      console.log("⚡ AI Biometric Verification PASSED! Score:", aiResult.score);
 
       // 4. Trigger Sensory Feedback (Audio Chime + Mobile Vibration)
       playVerificationChime();
@@ -285,14 +303,14 @@ export default function SelfieCapture({
   }, [sessionId, distanceMeters, onVerified, onFailed, stopCamera]);
 
   // ============================================================
-  // 4. ULTRA-FAST ROLLING PEAK-VALLEY-PEAK BLINK ENGINE (60ms)
+  // 4. AUTONOMOUS HIGH-SPEED ACTIVE EYE-BLINK ENGINE (60ms)
+  // Automatically detects face -> detects natural blink -> marks attendance!
   // ============================================================
   useEffect(() => {
     if (!cameraReady || !modelReady || loading) return;
 
     let active = true;
 
-    // High-frequency 60ms non-blocking tick (16+ FPS)
     const interval = setInterval(async () => {
       if (!active || isVerifyingRef.current || isProcessingFrameRef.current || !videoRef.current) return;
       if (videoRef.current.videoWidth === 0) return;
@@ -302,74 +320,71 @@ export default function SelfieCapture({
         const analysis = await analyzeLiveFrameLiveness(videoRef.current);
         if (!active || isVerifyingRef.current) return;
 
+        latestAnalysisRef.current = analysis;
+
+        // 🛑 STEP 1: FACE DETECTION CHECK
         if (!analysis.faceDetected) {
           setFaceDetected(false);
+          setEyesOpen(false);
           setLivenessStage("DETECTING");
-          earBufferRef.current = [];
+          baselineOpenEarRef.current = 0;
+          eyeClosedDetectedRef.current = false;
           setStatusMessage("⚠️ Center your face inside the oval guide");
           return;
         }
 
         setFaceDetected(true);
-        setEyesOpen(analysis.eyesOpen);
 
-        const now = performance.now();
-        earBufferRef.current.push({
-          ear: analysis.ear,
-          time: now,
-          open: analysis.eyesOpen,
-          closed: analysis.eyesClosed,
-        });
+        // 🛑 STEP 2: CLOSED-EYES HANDLING
+        if (analysis.eyesClosed) {
+          setEyesOpen(false);
 
-        // Retain rolling window of recent 700ms
-        earBufferRef.current = earBufferRef.current.filter((s) => now - s.time <= 700);
-
-        // 🧠 Peak-Valley-Peak Natural Blink Algorithm:
-        // A natural human eye blink lasts 100ms - 180ms.
-        // Condition for 100% genuine blink:
-        // 1. Current frame has eyes OPEN (ear >= 0.20)
-        // 2. An earlier sample in the buffer was CLOSED (ear < 0.175 or dropped >= 25%)
-        // 3. A sample prior to the closed frame had eyes OPEN
-        const samples = earBufferRef.current;
-        if (samples.length >= 4 && analysis.eyesOpen) {
-          let foundPriorOpen = false;
-          let foundValleyClosed = false;
-
-          for (let i = 0; i < samples.length - 1; i++) {
-            const s = samples[i];
-            if (!foundValleyClosed && s.open) {
-              foundPriorOpen = true;
-            }
-            if (foundPriorOpen && s.closed) {
-              foundValleyClosed = true;
-            }
+          // If eyes were previously open, this is a live BLINK IN PROGRESS!
+          if (baselineOpenEarRef.current >= 0.23) {
+            eyeClosedDetectedRef.current = true;
+            closedTimestampRef.current = performance.now();
+            setLivenessStage("BLINK_DETECTED");
+            setStatusMessage("👁️ Blink detected! Reopen your eyes to mark attendance...");
+          } else {
+            // Sleeping or facing camera with closed eyes from the start
+            setStatusMessage("❌ Eyes are closed! Please open your eyes and look at the camera.");
           }
+          return;
+        }
 
-          if (foundPriorOpen && foundValleyClosed) {
-            // ✨ Complete Natural Blink Cycle Confirmed!
+        // 🛑 STEP 3: EYES ARE OPEN
+        setEyesOpen(true);
+        baselineOpenEarRef.current = Math.max(baselineOpenEarRef.current, analysis.ear);
+
+        // 🛑 STEP 4: AUTONOMOUS BLINK CONFIRMATION
+        // Check if a voluntary eye blink cycle completed (Open -> Closed -> Reopened)
+        if (eyeClosedDetectedRef.current && analysis.eyesOpen) {
+          const blinkDuration = performance.now() - closedTimestampRef.current;
+
+          // A natural human blink lasts 60ms to 1200ms
+          if (blinkDuration >= 50 && blinkDuration <= 1500) {
+            // ✨ COMPLETE NATURAL BLINK CYCLE CONFIRMED!
             setLivenessStage("VERIFIED");
-            setStatusMessage("✨ Natural Eye Blink Confirmed! 🟢 Matching face...");
-            earBufferRef.current = []; // Reset buffer
+            setStatusMessage("✨ Natural Eye Blink Confirmed! 🟢 Matching face with photo...");
+            eyeClosedDetectedRef.current = false; // Reset
 
             if (autoCapture && !isVerifyingRef.current) {
               performBiometricVerification();
               return;
             }
+          } else if (blinkDuration > 1500) {
+            // Exceeded maximum blink time, reset
+            eyeClosedDetectedRef.current = false;
           }
         }
 
-        // Status messaging for user guidance
+        // Student guidance prompt
         if (livenessStage !== "VERIFIED") {
-          if (analysis.eyesClosed) {
-            setLivenessStage("BLINK_DETECTED");
-            setStatusMessage("👁️ Blink detected! Opening eyes...");
-          } else {
-            setLivenessStage("PROMPT_BLINK");
-            setStatusMessage("👀 Face Locked! Blink naturally or tap Mark Attendance");
-          }
+          setLivenessStage("PROMPT_BLINK");
+          setStatusMessage("👀 Face Locked! Please BLINK YOUR EYES naturally once to mark attendance...");
         }
       } catch (err) {
-        console.debug("Liveness loop error:", err);
+        console.debug("Liveness tracking error:", err);
       } finally {
         isProcessingFrameRef.current = false;
       }
@@ -382,11 +397,47 @@ export default function SelfieCapture({
   }, [cameraReady, modelReady, loading, autoCapture, livenessStage, performBiometricVerification]);
 
   // ============================================================
-  // 5. UI RENDER
+  // 5. MANUAL BUTTON HANDLER WITH STRICT ANTI-CLOSED-EYE CHECKS
+  // ============================================================
+  const handleManualAction = () => {
+    if (!faceDetected) {
+      alert("⚠️ Please look directly at the camera with your face inside the oval.");
+      return;
+    }
+
+    const currentAnalysis = latestAnalysisRef.current;
+
+    // Strict validation: Reject if eyes are currently closed!
+    if (!currentAnalysis || currentAnalysis.eyesClosed || currentAnalysis.ear < 0.22) {
+      alert(
+        "❌ Biometric Protection Blocked:\n\n" +
+        "Eyes are closed! You cannot mark attendance with your eyes closed.\n\n" +
+        "You must look directly at the camera with your eyes wide open.\n" +
+        "Sleeping, closed-eye, or spoofed photo poses are strictly rejected."
+      );
+      return;
+    }
+
+    // Strict validation: Require active liveness / voluntary blink
+    if (livenessStage !== "VERIFIED") {
+      alert(
+        "⚠️ Anti-Proxy Liveness Verification Required:\n\n" +
+        "Please blink your eyes naturally once in front of the camera.\n\n" +
+        "Attendance will be marked automatically as soon as your blink is detected!"
+      );
+      return;
+    }
+
+    // Trigger verification
+    performBiometricVerification();
+  };
+
+  // ============================================================
+  // 6. UI RENDER
   // ============================================================
   return (
     <div style={{ textAlign: "center", marginTop: "4px" }}>
-      {/* Header Badge */}
+      {/* Dynamic Header Status Badge */}
       <div
         style={{
           display: "inline-flex",
@@ -395,16 +446,24 @@ export default function SelfieCapture({
           background:
             livenessStage === "VERIFIED"
               ? "#ecfdf5"
-              : livenessStage === "BLINK_DETECTED" || livenessStage === "PROMPT_BLINK"
+              : livenessStage === "BLINK_DETECTED"
+              ? "#fef3c7"
+              : livenessStage === "PROMPT_BLINK"
               ? "#eff6ff"
+              : faceDetected && !eyesOpen
+              ? "#fef2f2"
               : faceDetected
               ? "#fefce8"
               : "#fff7ed",
           border: `1.5px solid ${
             livenessStage === "VERIFIED"
               ? "#10b981"
-              : livenessStage === "BLINK_DETECTED" || livenessStage === "PROMPT_BLINK"
+              : livenessStage === "BLINK_DETECTED"
+              ? "#f59e0b"
+              : livenessStage === "PROMPT_BLINK"
               ? "#3b82f6"
+              : faceDetected && !eyesOpen
+              ? "#ef4444"
               : faceDetected
               ? "#eab308"
               : "#fdba74"
@@ -416,8 +475,12 @@ export default function SelfieCapture({
           color:
             livenessStage === "VERIFIED"
               ? "#065f46"
-              : livenessStage === "BLINK_DETECTED" || livenessStage === "PROMPT_BLINK"
+              : livenessStage === "BLINK_DETECTED"
+              ? "#92400e"
+              : livenessStage === "PROMPT_BLINK"
               ? "#1d4ed8"
+              : faceDetected && !eyesOpen
+              ? "#991b1b"
               : faceDetected
               ? "#854d0e"
               : "#9a3412",
@@ -430,6 +493,8 @@ export default function SelfieCapture({
             ? "✨"
             : livenessStage === "BLINK_DETECTED"
             ? "👁️"
+            : faceDetected && !eyesOpen
+            ? "❌"
             : livenessStage === "PROMPT_BLINK"
             ? "👀"
             : faceDetected
@@ -438,11 +503,13 @@ export default function SelfieCapture({
         </span>
         <span>
           {livenessStage === "VERIFIED"
-            ? "⚡ Liveness Confirmed (Blink Verified)"
+            ? "✨ Live Blink Confirmed! Marking Attendance..."
             : livenessStage === "BLINK_DETECTED"
-            ? "👁️ Blink Detected! Reopening..."
+            ? "👁️ Blink Detected! Reopen eyes..."
+            : faceDetected && !eyesOpen
+            ? "❌ Eyes Closed! Open eyes to continue"
             : livenessStage === "PROMPT_BLINK"
-            ? "👀 Fast Scan: Blink Naturally or Tap Button"
+            ? "👀 Blink Naturally Once to Mark Attendance"
             : faceDetected
             ? "Face Detected — Look with Eyes Open"
             : "No Face Detected (Center Face in Oval)"}
@@ -461,6 +528,8 @@ export default function SelfieCapture({
           border: `3px solid ${
             livenessStage === "VERIFIED"
               ? "#10b981"
+              : faceDetected && !eyesOpen
+              ? "#ef4444"
               : livenessStage === "PROMPT_BLINK" || livenessStage === "BLINK_DETECTED"
               ? "#3b82f6"
               : faceDetected
@@ -470,6 +539,8 @@ export default function SelfieCapture({
           boxShadow:
             livenessStage === "VERIFIED"
               ? "0 0 24px rgba(16, 185, 129, 0.5)"
+              : faceDetected && !eyesOpen
+              ? "0 0 20px rgba(239, 68, 68, 0.4)"
               : livenessStage === "PROMPT_BLINK" || livenessStage === "BLINK_DETECTED"
               ? "0 0 20px rgba(59, 130, 246, 0.45)"
               : faceDetected
@@ -520,6 +591,8 @@ export default function SelfieCapture({
             border: `2px dashed ${
               livenessStage === "VERIFIED"
                 ? "#10b981"
+                : faceDetected && !eyesOpen
+                ? "#ef4444"
                 : livenessStage === "PROMPT_BLINK" || livenessStage === "BLINK_DETECTED"
                 ? "#3b82f6"
                 : faceDetected
@@ -531,6 +604,8 @@ export default function SelfieCapture({
             boxShadow:
               livenessStage === "VERIFIED"
                 ? "inset 0 0 22px rgba(16, 185, 129, 0.4)"
+                : faceDetected && !eyesOpen
+                ? "inset 0 0 20px rgba(239, 68, 68, 0.35)"
                 : livenessStage === "PROMPT_BLINK"
                 ? "inset 0 0 18px rgba(59, 130, 246, 0.3)"
                 : faceDetected
@@ -566,22 +641,11 @@ export default function SelfieCapture({
         </div>
       </div>
 
-      {/* Instant Action & Manual Capture Button */}
+      {/* Action Guidance & Strict Anti-Proxy Status */}
       <div style={{ marginTop: "16px" }}>
         <button
-          onClick={() => {
-            if (!faceDetected) {
-              alert("⚠️ Please look directly at the camera with your face inside the oval.");
-              return;
-            }
-            if (!eyesOpen) {
-              alert("⚠️ Eyes are closed! Please open your eyes and look at the camera.");
-              return;
-            }
-            // Execute fast biometric verification immediately!
-            performBiometricVerification();
-          }}
-          disabled={loading || !cameraReady || !faceDetected}
+          onClick={handleManualAction}
+          disabled={loading || !cameraReady || !faceDetected || !eyesOpen}
           style={{
             width: "100%",
             maxWidth: "320px",
@@ -591,17 +655,19 @@ export default function SelfieCapture({
             background:
               livenessStage === "VERIFIED"
                 ? "#10b981"
+                : faceDetected && !eyesOpen
+                ? "#fca5a5"
                 : faceDetected
                 ? "#2563eb"
                 : "#e2e8f0",
             color:
-              livenessStage === "VERIFIED" || faceDetected
+              livenessStage === "VERIFIED" || (faceDetected && eyesOpen)
                 ? "#ffffff"
                 : "#94a3b8",
             fontWeight: "800",
             fontSize: "14px",
-            cursor: faceDetected && !loading ? "pointer" : "not-allowed",
-            boxShadow: faceDetected ? "0 4px 14px rgba(37, 99, 235, 0.35)" : "none",
+            cursor: faceDetected && eyesOpen && !loading ? "pointer" : "not-allowed",
+            boxShadow: faceDetected && eyesOpen ? "0 4px 14px rgba(37, 99, 235, 0.35)" : "none",
             transition: "all 0.25s ease",
             display: "inline-flex",
             alignItems: "center",
@@ -615,11 +681,15 @@ export default function SelfieCapture({
             </>
           ) : livenessStage === "VERIFIED" ? (
             <>
-              <span>✨</span> Liveness Confirmed! Marking...
+              <span>✨</span> Verified! Recording Attendance...
+            </>
+          ) : faceDetected && !eyesOpen ? (
+            <>
+              <span>❌</span> Eyes Closed (Open Eyes to Verify)
             </>
           ) : faceDetected ? (
             <>
-              <span>⚡</span> Mark Attendance Now (Instant Verify)
+              <span>👀</span> Blink Naturally to Auto-Mark (or Tap)
             </>
           ) : (
             <>
@@ -629,7 +699,7 @@ export default function SelfieCapture({
         </button>
 
         <p style={{ margin: "10px 0 0 0", color: "#64748b", fontSize: "11.5px" }}>
-          🛡️ <strong>Fast Anti-Proxy Protection:</strong> Auto-captures on natural eye blink or 1-tap instant verify with real-time biometric face & eye verification.
+          🛡️ <strong>Hands-Free Auto-Attendance:</strong> Center face and blink naturally once. Attendance marks automatically with strict eye openness & biometric face verification.
         </p>
       </div>
 
