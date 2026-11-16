@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import "../../styles/login.css";
 import RITLogo from "../../assets/RIT_logo.jpeg";
 
@@ -30,13 +30,16 @@ export default function Login() {
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Self-Registration State
+  // Self-Registration State & Comprehensive Details
   const [isRegistering, setIsRegistering] = useState(false);
   const [regForm, setRegForm] = useState({
     prn: "",
     full_name: "",
     email: "",
     phone: "",
+    parent_phone: "",
+    blood_group: "A+",
+    address: "",
     branch: "AIML",
     year: "Final Year",
     division: "A",
@@ -45,6 +48,52 @@ export default function Login() {
   });
   const [photoPreview, setPhotoPreview] = useState("");
   const [regSuccess, setRegSuccess] = useState(false);
+
+  // Live Camera Snap State for Registration
+  const [showRegCamera, setShowRegCamera] = useState(false);
+  const regVideoRef = useRef<HTMLVideoElement | null>(null);
+  const regStreamRef = useRef<MediaStream | null>(null);
+
+  const startRegCamera = async () => {
+    try {
+      setShowRegCamera(true);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
+      });
+      regStreamRef.current = stream;
+      if (regVideoRef.current) {
+        regVideoRef.current.srcObject = stream;
+      }
+    } catch (err: any) {
+      alert("Camera error: " + (err?.message || "Please allow camera access."));
+      setShowRegCamera(false);
+    }
+  };
+
+  const stopRegCamera = () => {
+    if (regStreamRef.current) {
+      regStreamRef.current.getTracks().forEach((t) => t.stop());
+      regStreamRef.current = null;
+    }
+    setShowRegCamera(false);
+  };
+
+  const captureRegPhoto = () => {
+    if (!regVideoRef.current) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = 400;
+    canvas.height = 400;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      const vid = regVideoRef.current;
+      const minDim = Math.min(vid.videoWidth || 400, vid.videoHeight || 400);
+      const sx = ((vid.videoWidth || 400) - minDim) / 2;
+      const sy = ((vid.videoHeight || 400) - minDim) / 2;
+      ctx.drawImage(vid, sx, sy, minDim, minDim, 0, 0, 400, 400);
+      setPhotoPreview(canvas.toDataURL("image/jpeg", 0.85));
+    }
+    stopRegCamera();
+  };
 
   const login = async () => {
     setMsg("");
@@ -227,8 +276,12 @@ export default function Login() {
       setMsg("Please enter a valid student email address.");
       return;
     }
-    if (regForm.phone && !/^\d{10}$/.test(regForm.phone.replace(/[\s-]/g, ""))) {
-      setMsg("Please enter a valid 10-digit Indian mobile number.");
+    if (!regForm.phone.trim() || !/^\d{10}$/.test(regForm.phone.replace(/[\s-]/g, ""))) {
+      setMsg("Student 10-digit mobile number is mandatory for institutional record.");
+      return;
+    }
+    if (!photoPreview) {
+      setMsg("Profile photo is strictly required for facial verification. Please snap or upload a clear front-facing face photo.");
       return;
     }
     if (!regForm.password || regForm.password.length < 6) {
@@ -244,12 +297,15 @@ export default function Login() {
         full_name: regForm.full_name,
         email: regForm.email,
         phone: regForm.phone,
+        parent_phone: regForm.parent_phone,
+        blood_group: regForm.blood_group,
+        address: regForm.address,
         branch: regForm.branch,
         year: regForm.year,
         division: regForm.division,
         gender: regForm.gender,
         password: regForm.password,
-        avatar_url: photoPreview || undefined,
+        avatar_url: photoPreview,
       });
 
       setRegSuccess(true);
@@ -422,12 +478,24 @@ export default function Login() {
             </div>
 
             <div className="form-group">
-              <label>Mobile Number</label>
+              <label>Student Mobile Number *</label>
               <input
                 type="tel"
                 placeholder="10-digit mobile number"
                 value={regForm.phone}
                 onChange={(e) => setRegForm({ ...regForm, phone: e.target.value })}
+                required
+                disabled={loading}
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Parent / Guardian Mobile</label>
+              <input
+                type="tel"
+                placeholder="Emergency contact number"
+                value={regForm.parent_phone}
+                onChange={(e) => setRegForm({ ...regForm, parent_phone: e.target.value })}
                 disabled={loading}
               />
             </div>
@@ -476,7 +544,7 @@ export default function Login() {
             </div>
 
             <div className="form-group">
-              <label>Gender</label>
+              <label>Gender *</label>
               <select
                 value={regForm.gender}
                 onChange={(e) => setRegForm({ ...regForm, gender: e.target.value })}
@@ -486,6 +554,35 @@ export default function Login() {
                 <option value="Female">Female</option>
                 <option value="Other">Other</option>
               </select>
+            </div>
+
+            <div className="form-group">
+              <label>Blood Group</label>
+              <select
+                value={regForm.blood_group}
+                onChange={(e) => setRegForm({ ...regForm, blood_group: e.target.value })}
+                disabled={loading}
+              >
+                <option value="A+">A+</option>
+                <option value="A-">A-</option>
+                <option value="B+">B+</option>
+                <option value="B-">B-</option>
+                <option value="O+">O+</option>
+                <option value="O-">O-</option>
+                <option value="AB+">AB+</option>
+                <option value="AB-">AB-</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Permanent / Hostel Address</label>
+              <input
+                type="text"
+                placeholder="City / Hostel / Town"
+                value={regForm.address}
+                onChange={(e) => setRegForm({ ...regForm, address: e.target.value })}
+                disabled={loading}
+              />
             </div>
 
             <div className="form-group register-full-width">
@@ -500,22 +597,77 @@ export default function Login() {
               />
             </div>
 
-            <div className="form-group register-full-width photo-upload-box">
-              <label style={{ marginBottom: "8px" }}>Profile Photo (Face Verification Reference)</label>
+            <div className="form-group register-full-width photo-upload-box" style={{ background: "#f8fafc", padding: "16px", borderRadius: "10px", border: "1.5px dashed #cbd5e1" }}>
+              <label style={{ marginBottom: "8px", fontWeight: "700", color: "#1e293b", display: "block" }}>
+                Face Verification Reference Photo *
+              </label>
+              <p style={{ margin: "0 0 12px 0", fontSize: "12.5px", color: "#64748b" }}>
+                Capture or upload a clear, front-facing facial photo for biometric attendance verification.
+              </p>
+
               {photoPreview && (
-                <img
-                  src={photoPreview}
-                  alt="Preview"
-                  className="photo-preview-circle"
-                />
+                <div style={{ textAlign: "center", marginBottom: "12px" }}>
+                  <img
+                    src={photoPreview}
+                    alt="Preview"
+                    className="photo-preview-circle"
+                    style={{ width: "90px", height: "90px", borderRadius: "50%", objectFit: "cover", border: "3px solid #22c55e", boxShadow: "0 4px 10px rgba(0,0,0,0.1)" }}
+                  />
+                  <div style={{ color: "#16a34a", fontSize: "12px", fontWeight: "600", marginTop: "4px" }}>
+                    ✓ Face Photo Captured & Ready
+                  </div>
+                </div>
               )}
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={handlePhotoSelect}
-                disabled={loading}
-                style={{ marginBottom: 0, padding: "8px" }}
-              />
+
+              {showRegCamera ? (
+                <div style={{ textAlign: "center", background: "#000", padding: "12px", borderRadius: "8px", maxWidth: "340px", margin: "0 auto" }}>
+                  <video
+                    ref={regVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{ width: "100%", maxHeight: "240px", borderRadius: "6px", objectFit: "cover" }}
+                  />
+                  <div style={{ marginTop: "10px", display: "flex", gap: "8px", justifyContent: "center" }}>
+                    <button
+                      type="button"
+                      onClick={captureRegPhoto}
+                      style={{ background: "#22c55e", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px", fontWeight: "700", cursor: "pointer", fontSize: "13px" }}
+                    >
+                      📸 Snap Photo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopRegCamera}
+                      style={{ background: "#ef4444", color: "#fff", border: "none", padding: "8px 14px", borderRadius: "6px", fontWeight: "600", cursor: "pointer", fontSize: "13px" }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={startRegCamera}
+                    style={{ background: "#1e3a8a", color: "#ffffff", border: "none", padding: "9px 16px", borderRadius: "6px", fontWeight: "600", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
+                  >
+                    📷 Snap with Camera
+                  </button>
+                  <label
+                    style={{ background: "#f1f5f9", color: "#334155", border: "1px solid #cbd5e1", padding: "9px 16px", borderRadius: "6px", fontWeight: "600", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px", marginBottom: 0 }}
+                  >
+                    📁 Upload from File
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={handlePhotoSelect}
+                      disabled={loading}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                </div>
+              )}
             </div>
           </div>
 

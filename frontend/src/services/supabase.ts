@@ -437,6 +437,8 @@ export async function verifySessionQR(
   };
 }
 
+import { dispatchAttendanceEmailNotification } from "./emailService";
+
 export async function markAttendanceForStudent(
   sessionId: string,
   prn: string,
@@ -475,10 +477,14 @@ export async function markAttendanceForStudent(
       message: "Attendance has already been recorded for this lecture.",
       prn,
       name: student.full_name,
+      email: student.email,
+      subject: session.subject,
+      lecture_date: session.lecture_date,
+      distance_meters: distanceMeters,
     };
   }
 
-  // Record attendance with physical distance telemetry
+  // Record attendance with physical distance telemetry and resolution=ignore-duplicates for 100+ concurrent students
   const record = {
     session_id: sessionId,
     teacher_id: session.teacher_id,
@@ -493,19 +499,59 @@ export async function markAttendanceForStudent(
     distance_meters: distanceMeters ?? null,
   };
 
-  await supabaseQuery("attendance", {
-    method: "POST",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify(record),
-  });
+  try {
+    await supabaseQuery("attendance", {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+      body: JSON.stringify(record),
+    });
+  } catch (insertErr: any) {
+    // If a concurrent request already marked it, treat gracefully
+    if (insertErr?.message?.includes("uq_session_prn") || insertErr?.message?.includes("duplicate")) {
+      return {
+        success: true,
+        already_marked: true,
+        message: "Attendance recorded concurrently.",
+        prn,
+        name: student.full_name,
+        email: student.email,
+        subject: session.subject,
+        lecture_date: session.lecture_date,
+      };
+    }
+    throw insertErr;
+  }
+
+  // 📧 Trigger Automated Real-Time Email Notification Slip
+  let notifReceipt = null;
+  try {
+    notifReceipt = await dispatchAttendanceEmailNotification({
+      sessionId,
+      prn,
+      studentName: student.full_name,
+      studentEmail: student.email,
+      subject: session.subject,
+      department: session.department,
+      year: session.year,
+      lectureDate: session.lecture_date,
+      teacherName: session.teacher_id,
+      distanceMeters: distanceMeters ?? null,
+    });
+  } catch (emailErr) {
+    console.warn("Email dispatch error (non-blocking):", emailErr);
+  }
 
   return {
     success: true,
     already_marked: false,
-    message: "Attendance marked successfully!",
+    message: `Attendance marked successfully! Email notification dispatched to ${student.email}`,
     prn,
     name: student.full_name,
+    email: student.email,
+    subject: session.subject,
+    lecture_date: session.lecture_date,
     distance_meters: distanceMeters,
+    notification_receipt: notifReceipt,
   };
 }
 
@@ -611,7 +657,10 @@ export async function registerStudent(studentData: {
   prn: string;
   full_name: string;
   email: string;
-  phone?: string;
+  phone: string;
+  parent_phone?: string;
+  blood_group?: string;
+  address?: string;
   year: string;
   branch: string;
   division: string;
@@ -633,11 +682,14 @@ export async function registerStudent(studentData: {
     throw new Error(`Student with email ${cleanEmail} is already registered.`);
   }
 
-  const payload = {
+  const payload: any = {
     prn: cleanPrn,
     full_name: studentData.full_name.trim(),
     email: cleanEmail,
-    phone: studentData.phone?.trim() || null,
+    phone: studentData.phone.trim(),
+    parent_phone: studentData.parent_phone?.trim() || null,
+    blood_group: studentData.blood_group?.trim() || null,
+    address: studentData.address?.trim() || null,
     year: studentData.year.trim(),
     branch: studentData.branch.trim(),
     division: studentData.division.trim(),

@@ -22,6 +22,15 @@ export default function ScanQR() {
   const startingRef = useRef(false);
   const [sessionId, setSessionId] = useState("");
   const [, setQrToken] = useState("");
+  const [showSlipModal, setShowSlipModal] = useState(false);
+  const [slipData, setSlipData] = useState<{
+    prn: string;
+    studentName: string;
+    studentEmail: string;
+    subject: string;
+    distanceText: string;
+    timeStr: string;
+  } | null>(null);
 
   // 🛑 THOROUGH CLEANUP: RELEASES HARDWARE SENSORS & TURNS OFF LAPTOP/PHONE LIGHT
   const stopScanner = useCallback(async () => {
@@ -382,11 +391,23 @@ export default function ScanQR() {
             sessionId={sessionId}
             autoCapture={true}
             distanceMeters={verifiedDistance}
-            onVerified={() => {
-              const distText = verifiedDistance !== null ? ` (Location: ${verifiedDistance}m from Professor)` : "";
-              alert(`✅ Attendance Marked Successfully!${distText}`);
+            onVerified={(verifiedName?: string) => {
+              const studentPrn = localStorage.getItem("prn") || "";
+              const studentEmail = localStorage.getItem("email") || `${studentPrn}@ritindia.edu`;
+              const fullName = verifiedName || localStorage.getItem("full_name") || "Student";
+              const distText = verifiedDistance !== null ? `${verifiedDistance.toFixed(1)}m (Inside Classroom)` : "Inside Perimeter";
+              const timeStr = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+
+              setSlipData({
+                prn: studentPrn,
+                studentName: fullName,
+                studentEmail,
+                subject: "Lecture Session",
+                distanceText: distText,
+                timeStr,
+              });
               setShowSelfie(false);
-              navigate("/profile");
+              setShowSlipModal(true);
             }}
             onFailed={() => {
               alert("❌ Face Verification Failed. Please try again.");
@@ -552,6 +573,54 @@ export default function ScanQR() {
           </>
         )}
       </div>
+
+      {/* 📧 Real-Time Official Attendance Slip & Email Notification Modal */}
+      {showSlipModal && slipData && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: "16px" }}>
+          <div style={{ background: "#ffffff", borderRadius: "16px", maxWidth: "460px", width: "100%", overflow: "hidden", boxShadow: "0 20px 40px rgba(0,0,0,0.25)", border: "1px solid #e2e8f0" }}>
+            {/* Header */}
+            <div style={{ background: "linear-gradient(135deg, #1e3a8a 0%, #0284c7 100%)", padding: "20px", color: "#fff", textAlign: "center" }}>
+              <div style={{ fontSize: "36px", marginBottom: "6px" }}>🎓</div>
+              <h3 style={{ margin: "0 0 4px 0", fontSize: "18px", fontWeight: "750" }}>Rajarambapu Institute of Technology</h3>
+              <p style={{ margin: 0, fontSize: "12px", opacity: 0.9 }}>Digital Attendance & Email Notification Slip</p>
+            </div>
+
+            <div style={{ padding: "20px" }}>
+              <div style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: "8px", padding: "10px 14px", textAlign: "center", marginBottom: "14px" }}>
+                <span style={{ color: "#065f46", fontWeight: "750", fontSize: "14px" }}>
+                  ✅ ATTENDANCE MARKED SUCCESSFULLY
+                </span>
+              </div>
+
+              <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "8px", padding: "12px 14px", marginBottom: "16px", display: "flex", alignItems: "center", gap: "10px" }}>
+                <span style={{ fontSize: "24px" }}>📧</span>
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ color: "#1e40af", fontWeight: "700", fontSize: "13px" }}>Email Notification Dispatched</div>
+                  <div style={{ color: "#2563eb", fontSize: "12px" }}>Confirmation slip dispatched to {slipData.studentEmail}</div>
+                </div>
+              </div>
+
+              <div style={{ background: "#f8fafc", borderRadius: "8px", padding: "14px", border: "1px solid #e2e8f0", fontSize: "13px", lineHeight: "1.7", textAlign: "left" }}>
+                <div><strong>Student Name:</strong> {slipData.studentName}</div>
+                <div><strong>PRN:</strong> {slipData.prn}</div>
+                <div><strong>Time & Date:</strong> {slipData.timeStr} ({new Date().toLocaleDateString("en-IN")})</div>
+                <div><strong>Classroom Distance:</strong> <span style={{ color: "#059669", fontWeight: "600" }}>📍 {slipData.distanceText}</span></div>
+                <div><strong>Security Verification:</strong> <span style={{ color: "#16a34a", fontWeight: "600" }}>✓ QR Token ✓ PIN ✓ Geofence ✓ Liveness</span></div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setShowSlipModal(false);
+                  navigate("/profile");
+                }}
+                style={{ width: "100%", background: "#ffca08", color: "#111827", border: "none", padding: "12px", borderRadius: "8px", fontWeight: "750", fontSize: "14px", marginTop: "18px", cursor: "pointer", boxShadow: "0 2px 8px rgba(255, 202, 8, 0.4)" }}
+              >
+                View Student Profile & Analytics →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes spin {

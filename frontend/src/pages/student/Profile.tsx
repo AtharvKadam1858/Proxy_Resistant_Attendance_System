@@ -10,6 +10,10 @@ import {
   applyStudentLeave,
   getStudentAttendanceHistory,
 } from "../../services/supabase";
+import {
+  getStudentNotificationReceipts,
+  type AttendanceNotificationRecord,
+} from "../../services/emailService";
 import ritLogo from "../../assets/RIT_logo.jpeg";
 
 interface Student {
@@ -17,6 +21,9 @@ interface Student {
   prn: string;
   email: string;
   phone: string;
+  parent_phone?: string;
+  blood_group?: string;
+  address?: string;
   year: string;
   branch: string;
   division: string;
@@ -36,6 +43,10 @@ export default function Profile() {
   const [photoPreview, setPhotoPreview] = useState("");
   const [uploading, setUploading] = useState(false);
   const [photoError, setPhotoError] = useState(false);
+
+  // 📬 Official Email Receipts & Notification State
+  const [notificationReceipts, setNotificationReceipts] = useState<AttendanceNotificationRecord[]>([]);
+  const [selectedReceipt, setSelectedReceipt] = useState<AttendanceNotificationRecord | null>(null);
 
   // 🎓 Educational Record & Resume State
   const [cgpa, setCgpa] = useState("");
@@ -114,6 +125,14 @@ export default function Profile() {
           }
         } catch (attErr) {
           console.warn("Attendance summary load warning:", attErr);
+        }
+
+        // Fetch Official Attendance Email Receipts & Notification Slips
+        try {
+          const receipts = await getStudentNotificationReceipts(prn);
+          setNotificationReceipts(receipts);
+        } catch (rErr) {
+          console.debug("Receipts load warning:", rErr);
         }
 
         setLoading(false);
@@ -376,14 +395,25 @@ export default function Profile() {
           <div className="profile-info">
             <h3>{student.full_name}</h3>
             <p>
-              <b>PRN:</b> {student.prn} &nbsp;|&nbsp; <b>Division:</b> {student.division}
+              <b>PRN:</b> {student.prn} &nbsp;|&nbsp; <b>Division:</b> {student.division} &nbsp;|&nbsp; <b>Gender:</b> {student.gender || "N/A"}
             </p>
             <p>
               <b>Class:</b> {student.year} &nbsp;|&nbsp; <b>Branch:</b> {student.branch}
             </p>
             <p>
-              <b>Email:</b> {student.email}
+              <b>Email:</b> {student.email} &nbsp;|&nbsp; <b>Mobile:</b> {student.phone || "Not set"}
             </p>
+            {(student.parent_phone || student.blood_group) && (
+              <p>
+                {student.parent_phone && <span><b>Emergency / Parent:</b> {student.parent_phone} &nbsp;|&nbsp; </span>}
+                {student.blood_group && <span><b>Blood Group:</b> {student.blood_group}</span>}
+              </p>
+            )}
+            {student.address && (
+              <p>
+                <b>Address:</b> {student.address}
+              </p>
+            )}
           </div>
         </div>
 
@@ -702,7 +732,71 @@ export default function Profile() {
           </button>
         </div>
 
-        {/* Section 3: Change Password */}
+        {/* Section 3: Official Attendance Email Receipts & Notification Slips */}
+        <div className="section">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+            <h4 style={{ margin: 0, color: "#111827", fontSize: "15px" }}>
+              📬 Official Attendance Email Receipts ({notificationReceipts.length})
+            </h4>
+            <span style={{ fontSize: "12px", color: "#059669", fontWeight: "700" }}>
+              ✓ Auto-Dispatched
+            </span>
+          </div>
+          <p style={{ margin: "0 0 12px 0", fontSize: "12.5px", color: "#64748b" }}>
+            Every successful lecture attendance generates an immutable cryptographic verification slip dispatched to your college email.
+          </p>
+
+          {notificationReceipts.length === 0 ? (
+            <div style={{ padding: "16px", background: "#f8fafc", borderRadius: "8px", textAlign: "center", fontSize: "13px", color: "#64748b", border: "1px dashed #cbd5e1" }}>
+              No attendance slips recorded yet. As you mark attendance in lectures, official email receipts will be stored here automatically.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "260px", overflowY: "auto" }}>
+              {notificationReceipts.slice(0, 10).map((rcpt) => (
+                <div
+                  key={rcpt.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "10px 12px",
+                    background: "#f9fafb",
+                    borderRadius: "8px",
+                    border: "1px solid #e5e7eb",
+                    fontSize: "12.5px",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: "750", color: "#1e3a8a" }}>{rcpt.subject}</div>
+                    <div style={{ color: "#6b7280", fontSize: "11.5px" }}>
+                      {rcpt.lecture_date} at {rcpt.lecture_time} &nbsp;|&nbsp;
+                      {rcpt.distance_meters !== null ? ` 📍 ${rcpt.distance_meters}m` : " 📍 Inside"}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedReceipt(rcpt)}
+                    style={{
+                      background: "#ffffff",
+                      border: "1px solid #d1d5db",
+                      borderRadius: "6px",
+                      padding: "5px 10px",
+                      fontSize: "11.5px",
+                      fontWeight: "700",
+                      color: "#1e3a8a",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    📄 View Slip
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Section 4: Change Password */}
         <div className="section">
           <h4 style={{ margin: "0 0 10px 0", color: "#111827", fontSize: "15px" }}>
             🔒 Change Portal Password
@@ -1117,6 +1211,59 @@ export default function Profile() {
               >
                 Cancel
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 📄 Official Email Slip Viewer Modal */}
+      {selectedReceipt && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: "16px" }}>
+          <div style={{ background: "#ffffff", borderRadius: "14px", maxWidth: "500px", width: "100%", overflow: "hidden", boxShadow: "0 20px 40px rgba(0,0,0,0.25)", border: "1px solid #e2e8f0" }}>
+            <div style={{ background: "linear-gradient(135deg, #1e3a8a 0%, #0284c7 100%)", padding: "16px 20px", color: "#ffffff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h4 style={{ margin: 0, fontSize: "16px", fontWeight: "750" }}>Official Attendance Receipt</h4>
+                <p style={{ margin: 0, fontSize: "11.5px", opacity: 0.9 }}>Dispatched to {selectedReceipt.student_email}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedReceipt(null)}
+                style={{ background: "transparent", border: "none", color: "#ffffff", fontSize: "20px", cursor: "pointer" }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ padding: "20px" }}>
+              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "10px 14px", marginBottom: "14px", textAlign: "center" }}>
+                <span style={{ color: "#166534", fontWeight: "750", fontSize: "13px" }}>
+                  ✅ VERIFIED & LOGGED IN CLOUD DATABASE
+                </span>
+              </div>
+              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "14px", fontSize: "13px", lineHeight: "1.7" }}>
+                <div><strong>Subject:</strong> {selectedReceipt.subject}</div>
+                <div><strong>Class:</strong> {selectedReceipt.department} - {selectedReceipt.year}</div>
+                <div><strong>Student:</strong> {selectedReceipt.student_name} (PRN: {selectedReceipt.prn})</div>
+                <div><strong>Date & Time:</strong> {selectedReceipt.lecture_date} at {selectedReceipt.lecture_time}</div>
+                <div><strong>Faculty In-Charge:</strong> {selectedReceipt.teacher_name}</div>
+                <div><strong>Classroom Distance:</strong> <span style={{ color: "#059669", fontWeight: "650" }}>📍 {selectedReceipt.distance_meters !== null ? `${selectedReceipt.distance_meters}m` : "Inside Classroom Perimeter"}</span></div>
+                <div><strong>Status:</strong> <span style={{ color: "#2563eb", fontWeight: "600" }}>{selectedReceipt.status} via {selectedReceipt.notification_type}</span></div>
+              </div>
+              <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  style={{ flex: 1, background: "#ffca08", color: "#111827", border: "none", padding: "10px", borderRadius: "6px", fontWeight: "750", cursor: "pointer", fontSize: "13px" }}
+                >
+                  🖨️ Print Slip
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedReceipt(null)}
+                  style={{ flex: 1, background: "#f1f5f9", color: "#334155", border: "1px solid #cbd5e1", padding: "10px", borderRadius: "6px", fontWeight: "600", cursor: "pointer", fontSize: "13px" }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
