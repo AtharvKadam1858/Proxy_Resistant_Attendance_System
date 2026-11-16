@@ -39,6 +39,99 @@ export async function loadFaceApiModels(): Promise<void> {
   return modelLoadingPromise;
 }
 
+function pointDistance(p1: { x: number; y: number }, p2: { x: number; y: number }): number {
+  const dx = p1.x - p2.x;
+  const dy = p1.y - p2.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
+ * 👁️ Calculates the Eye Aspect Ratio (EAR) using Soukupová & Čech's formula.
+ * Used for Real-Time Blink Detection & Anti-Photo Spoof Prevention.
+ */
+export function calculateEyeAspectRatio(eyePoints: { x: number; y: number }[]): number {
+  if (!eyePoints || eyePoints.length < 6) return 0;
+  // Points: p0 (outer corner), p3 (inner corner)
+  // Vertical distances: p1-p5, p2-p4
+  const v1 = pointDistance(eyePoints[1], eyePoints[5]);
+  const v2 = pointDistance(eyePoints[2], eyePoints[4]);
+  const h = pointDistance(eyePoints[0], eyePoints[3]);
+  if (h === 0) return 0;
+  return (v1 + v2) / (2.0 * h);
+}
+
+export interface LiveFrameAnalysis {
+  faceDetected: boolean;
+  landmarksDetected: boolean;
+  ear: number;
+  eyesOpen: boolean;
+  eyesClosed: boolean;
+}
+
+/**
+ * 👁️ Fast Real-Time Live Frame Analysis for Active Blink & Liveness Detection
+ * Detects whether a real human face is present, whether eyes are open or blinking,
+ * preventing printed photographs and screen displays from marking attendance.
+ */
+export async function analyzeLiveFrameLiveness(
+  videoOrCanvas: HTMLVideoElement | HTMLCanvasElement
+): Promise<LiveFrameAnalysis> {
+  try {
+    await loadFaceApiModels();
+    const detection = await faceapi
+      .detectSingleFace(
+        videoOrCanvas,
+        new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.35 })
+      )
+      .withFaceLandmarks();
+
+    if (!detection) {
+      return {
+        faceDetected: false,
+        landmarksDetected: false,
+        ear: 0,
+        eyesOpen: false,
+        eyesClosed: true,
+      };
+    }
+
+    const landmarks = detection.landmarks;
+    const leftEye = landmarks.getLeftEye();
+    const rightEye = landmarks.getRightEye();
+
+    if (!leftEye || leftEye.length < 6 || !rightEye || rightEye.length < 6) {
+      return {
+        faceDetected: true,
+        landmarksDetected: false,
+        ear: 0,
+        eyesOpen: false,
+        eyesClosed: true,
+      };
+    }
+
+    const leftEar = calculateEyeAspectRatio(leftEye);
+    const rightEar = calculateEyeAspectRatio(rightEye);
+    const ear = (leftEar + rightEar) / 2.0;
+
+    return {
+      faceDetected: true,
+      landmarksDetected: true,
+      ear,
+      eyesOpen: ear >= 0.20,
+      eyesClosed: ear < 0.17,
+    };
+  } catch (err) {
+    console.debug("Liveness analysis frame probe error:", err);
+    return {
+      faceDetected: false,
+      landmarksDetected: false,
+      ear: 0,
+      eyesOpen: false,
+      eyesClosed: true,
+    };
+  }
+}
+
 /**
  * 🔍 Real-time face detection on a video element or canvas
  * Returns whether a human face is currently visible in the frame
@@ -50,7 +143,7 @@ export async function detectFaceInFrame(
     await loadFaceApiModels();
     const detection = await faceapi.detectSingleFace(
       videoOrCanvas,
-      new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })
+      new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.35 })
     );
     return !!detection;
   } catch (e) {
@@ -214,6 +307,23 @@ export async function verifyLiveFaceAgainstRegistered(
       message: "❌ Facial landmarks obscured. Please remove sunglasses, masks, or hats and face the camera directly.",
       faceDetected: true,
       landmarksDetected: false,
+      registeredFaceFound: true,
+    };
+  }
+
+  // 🛑 2b. EYE OPENNESS & LIVENESS INTEGRITY CHECK:
+  const leftEar = calculateEyeAspectRatio(leftEye);
+  const rightEar = calculateEyeAspectRatio(rightEye);
+  const avgEar = (leftEar + rightEar) / 2.0;
+
+  if (avgEar < 0.17) {
+    return {
+      verified: false,
+      score: 0.1,
+      euclideanDistance: 1.0,
+      message: "❌ Eyes are closed! You must look directly at the camera with your eyes open. Sleeping, closed-eye, or spoofed poses are strictly rejected.",
+      faceDetected: true,
+      landmarksDetected: true,
       registeredFaceFound: true,
     };
   }

@@ -4,6 +4,7 @@ import { markAttendanceForStudent, getStudentProfile } from "../services/supabas
 import {
   loadFaceApiModels,
   detectFaceInFrame,
+  analyzeLiveFrameLiveness,
   verifyLiveFaceAgainstRegistered,
 } from "../services/aiFaceRecognition";
 
@@ -29,11 +30,13 @@ export default function SelfieCapture({
   const [cameraReady, setCameraReady] = useState(false);
   const [modelReady, setModelReady] = useState(false);
   const [faceDetected, setFaceDetected] = useState<boolean>(false);
+  const [livenessStage, setLivenessStage] = useState<"DETECTING" | "PROMPT_BLINK" | "BLINK_DETECTED" | "VERIFIED">("DETECTING");
   const [statusMessage, setStatusMessage] = useState<string>("Initializing AI Biometric Models...");
   const [verificationFeedback, setVerificationFeedback] = useState<string | null>(null);
-  const [faceCountdown, setFaceCountdown] = useState<number | null>(null);
 
   const isVerifyingRef = useRef(false);
+  const baselineEarRef = useRef<number>(0);
+  const blinkDetectedRef = useRef<boolean>(false);
 
   // ============================================================
   // 1. INITIALIZE NEURAL MODELS & CAMERA HARDWARE
@@ -265,7 +268,7 @@ export default function SelfieCapture({
   }, [sessionId, distanceMeters, onVerified, onFailed, stopCamera]);
 
   // ============================================================
-  // 4. REAL-TIME FACE PRESENCE MONITORING LOOP
+  // 4. REAL-TIME ACTIVE EYE-BLINK & ANTI-SPOOF LIVENESS DETECTION
   // ============================================================
   useEffect(() => {
     if (!cameraReady || !modelReady || loading) return;
@@ -275,52 +278,63 @@ export default function SelfieCapture({
       if (!active || isVerifyingRef.current || !videoRef.current) return;
       if (videoRef.current.videoWidth === 0) return;
 
-      const detected = await detectFaceInFrame(videoRef.current);
+      const analysis = await analyzeLiveFrameLiveness(videoRef.current);
       if (!active) return;
 
-      setFaceDetected(detected);
-      if (detected) {
-        setStatusMessage("✅ Human Face Detected! Hold still inside the frame...");
-      } else {
-        setStatusMessage("⚠️ No Face Detected — Center your face in the oval (Walls & empty spaces are rejected)");
-        setFaceCountdown(null);
+      if (!analysis.faceDetected) {
+        setFaceDetected(false);
+        setLivenessStage("DETECTING");
+        baselineEarRef.current = 0;
+        blinkDetectedRef.current = false;
+        setStatusMessage("⚠️ No Face Detected — Center your face in the oval");
+        return;
       }
-    }, 600);
+
+      setFaceDetected(true);
+
+      // Guard: closed eyes from the beginning
+      if (analysis.eyesClosed && baselineEarRef.current === 0) {
+        setStatusMessage("⚠️ Eyes are closed! Please open your eyes and look at the camera.");
+        return;
+      }
+
+      // Step 1: Establish baseline open-eye EAR
+      if (baselineEarRef.current === 0 && analysis.eyesOpen) {
+        baselineEarRef.current = analysis.ear;
+        setLivenessStage("PROMPT_BLINK");
+        setStatusMessage("👀 Face Locked! Please BLINK YOUR EYES naturally to verify live human presence (Anti-Photo Protection)...");
+        return;
+      }
+
+      // Step 2: Detect voluntary eye blink (eyelids closing)
+      // A genuine blink drops EAR by >= 30% from baseline open eye, or drops below 0.18
+      if (baselineEarRef.current > 0 && !blinkDetectedRef.current) {
+        if (analysis.ear < 0.18 || analysis.ear < baselineEarRef.current * 0.70) {
+          blinkDetectedRef.current = true;
+          setLivenessStage("BLINK_DETECTED");
+          setStatusMessage("👁️ Blink in progress... Now open your eyes to complete verification!");
+          return;
+        }
+      }
+
+      // Step 3: Detect eyelids reopening after blink (full live human blink cycle confirmed!)
+      if (blinkDetectedRef.current && (analysis.eyesOpen || analysis.ear >= baselineEarRef.current * 0.85)) {
+        setLivenessStage("VERIFIED");
+        setStatusMessage("✨ Real Human Eye Blink Confirmed 🟢 Matching face with registered photo in cloud database...");
+        if (!isVerifyingRef.current) {
+          performBiometricVerification();
+        }
+      }
+    }, 150);
 
     return () => {
       active = false;
       clearInterval(interval);
     };
-  }, [cameraReady, modelReady, loading]);
+  }, [cameraReady, modelReady, loading, performBiometricVerification]);
 
   // ============================================================
-  // 5. AUTO-CAPTURE: TRIGGERS ONLY WHEN A FACE IS DETECTED
-  // ============================================================
-  useEffect(() => {
-    if (!autoCapture || !faceDetected || loading || isVerifyingRef.current) {
-      setFaceCountdown(null);
-      return;
-    }
-
-    setFaceCountdown(2);
-    const timer1 = setTimeout(() => {
-      setFaceCountdown(1);
-    }, 1000);
-
-    const timer2 = setTimeout(() => {
-      if (faceDetected && !isVerifyingRef.current) {
-        performBiometricVerification();
-      }
-    }, 2000);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  }, [faceDetected, autoCapture, loading, performBiometricVerification]);
-
-  // ============================================================
-  // 6. UI RENDER
+  // 5. UI RENDER
   // ============================================================
   return (
     <div style={{ textAlign: "center", marginTop: "4px" }}>
@@ -330,18 +344,61 @@ export default function SelfieCapture({
           display: "inline-flex",
           alignItems: "center",
           gap: "8px",
-          background: faceDetected ? "#ecfdf5" : "#fff7ed",
-          border: `1px solid ${faceDetected ? "#a7f3d0" : "#fdba74"}`,
-          padding: "6px 14px",
+          background:
+            livenessStage === "VERIFIED"
+              ? "#ecfdf5"
+              : livenessStage === "BLINK_DETECTED" || livenessStage === "PROMPT_BLINK"
+              ? "#eff6ff"
+              : faceDetected
+              ? "#fefce8"
+              : "#fff7ed",
+          border: `1.5px solid ${
+            livenessStage === "VERIFIED"
+              ? "#10b981"
+              : livenessStage === "BLINK_DETECTED" || livenessStage === "PROMPT_BLINK"
+              ? "#3b82f6"
+              : faceDetected
+              ? "#eab308"
+              : "#fdba74"
+          }`,
+          padding: "6px 16px",
           borderRadius: "20px",
-          fontSize: "12.5px",
-          fontWeight: "750",
-          color: faceDetected ? "#065f46" : "#9a3412",
+          fontSize: "13px",
+          fontWeight: "800",
+          color:
+            livenessStage === "VERIFIED"
+              ? "#065f46"
+              : livenessStage === "BLINK_DETECTED" || livenessStage === "PROMPT_BLINK"
+              ? "#1d4ed8"
+              : faceDetected
+              ? "#854d0e"
+              : "#9a3412",
           marginBottom: "12px",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
         }}
       >
-        <span>{faceDetected ? "🟢" : "🔴"}</span>
-        <span>{faceDetected ? "Human Face Detected & Tracked" : "No Face Detected (Point Camera at Face)"}</span>
+        <span>
+          {livenessStage === "VERIFIED"
+            ? "✨"
+            : livenessStage === "BLINK_DETECTED"
+            ? "👁️"
+            : livenessStage === "PROMPT_BLINK"
+            ? "👀"
+            : faceDetected
+            ? "🟡"
+            : "🔴"}
+        </span>
+        <span>
+          {livenessStage === "VERIFIED"
+            ? "Live Human Verified (Blink Confirmed)"
+            : livenessStage === "BLINK_DETECTED"
+            ? "Blink Detected! Opening eyes..."
+            : livenessStage === "PROMPT_BLINK"
+            ? "Liveness Check: Please BLINK Your Eyes"
+            : faceDetected
+            ? "Face Detected — Look with Eyes Open"
+            : "No Face Detected (Center Face in Oval)"}
+        </span>
       </div>
 
       {/* Camera Viewport Container with Biometric Guide */}
@@ -353,10 +410,23 @@ export default function SelfieCapture({
           margin: "0 auto",
           borderRadius: "16px",
           overflow: "hidden",
-          border: `3px solid ${faceDetected ? "#10b981" : "#f59e0b"}`,
-          boxShadow: faceDetected
-            ? "0 0 20px rgba(16, 185, 129, 0.45)"
-            : "0 0 15px rgba(245, 158, 11, 0.35)",
+          border: `3px solid ${
+            livenessStage === "VERIFIED"
+              ? "#10b981"
+              : livenessStage === "PROMPT_BLINK" || livenessStage === "BLINK_DETECTED"
+              ? "#3b82f6"
+              : faceDetected
+              ? "#f59e0b"
+              : "#94a3b8"
+          }`,
+          boxShadow:
+            livenessStage === "VERIFIED"
+              ? "0 0 24px rgba(16, 185, 129, 0.5)"
+              : livenessStage === "PROMPT_BLINK" || livenessStage === "BLINK_DETECTED"
+              ? "0 0 20px rgba(59, 130, 246, 0.45)"
+              : faceDetected
+              ? "0 0 15px rgba(245, 158, 11, 0.35)"
+              : "none",
           background: "#0f172a",
           display: "flex",
           alignItems: "center",
@@ -399,13 +469,26 @@ export default function SelfieCapture({
           style={{
             position: "absolute",
             inset: "25px 40px",
-            border: `2px dashed ${faceDetected ? "#10b981" : "rgba(255,255,255,0.7)"}`,
+            border: `2px dashed ${
+              livenessStage === "VERIFIED"
+                ? "#10b981"
+                : livenessStage === "PROMPT_BLINK" || livenessStage === "BLINK_DETECTED"
+                ? "#3b82f6"
+                : faceDetected
+                ? "#eab308"
+                : "rgba(255,255,255,0.7)"
+            }`,
             borderRadius: "50%",
             pointerEvents: "none",
-            boxShadow: faceDetected
-              ? "inset 0 0 18px rgba(16, 185, 129, 0.3)"
-              : "inset 0 0 12px rgba(0,0,0,0.5)",
-            transition: "all 0.3s ease",
+            boxShadow:
+              livenessStage === "VERIFIED"
+                ? "inset 0 0 22px rgba(16, 185, 129, 0.4)"
+                : livenessStage === "PROMPT_BLINK"
+                ? "inset 0 0 18px rgba(59, 130, 246, 0.3)"
+                : faceDetected
+                ? "inset 0 0 14px rgba(234, 179, 8, 0.3)"
+                : "inset 0 0 12px rgba(0,0,0,0.5)",
+            transition: "all 0.25s ease",
           }}
         />
 
@@ -416,7 +499,7 @@ export default function SelfieCapture({
             bottom: "10px",
             left: "10px",
             right: "10px",
-            background: "rgba(15, 23, 42, 0.85)",
+            background: "rgba(15, 23, 42, 0.88)",
             backdropFilter: "blur(6px)",
             padding: "8px 12px",
             borderRadius: "8px",
@@ -429,10 +512,6 @@ export default function SelfieCapture({
         >
           {loading ? (
             <span style={{ color: "#38bdf8" }}>⚡ {verificationFeedback || "Verifying Biometrics..."}</span>
-          ) : faceCountdown !== null ? (
-            <span style={{ color: "#34d399", fontWeight: "800", fontSize: "13px" }}>
-              ⏱️ Face Verified — Capturing in {faceCountdown}s...
-            </span>
           ) : (
             <span>{statusMessage}</span>
           )}
@@ -442,7 +521,13 @@ export default function SelfieCapture({
       {/* Manual Verification Trigger Button */}
       <div style={{ marginTop: "16px" }}>
         <button
-          onClick={performBiometricVerification}
+          onClick={() => {
+            if (livenessStage !== "VERIFIED") {
+              alert("⚠️ Active Anti-Spoofing Protection:\n\nYou must perform a natural eye blink in front of the camera to verify you are a live human.\n\nPrinted photographs, laptop screens, or closed-eye attempts cannot mark attendance.");
+              return;
+            }
+            performBiometricVerification();
+          }}
           disabled={loading || !cameraReady || !faceDetected}
           style={{
             width: "100%",
@@ -450,12 +535,24 @@ export default function SelfieCapture({
             padding: "13px 20px",
             borderRadius: "10px",
             border: "none",
-            background: faceDetected ? "#ffca08" : "#e2e8f0",
-            color: faceDetected ? "#111827" : "#94a3b8",
+            background:
+              livenessStage === "VERIFIED"
+                ? "#10b981"
+                : livenessStage === "PROMPT_BLINK" || livenessStage === "BLINK_DETECTED"
+                ? "#3b82f6"
+                : faceDetected
+                ? "#ffca08"
+                : "#e2e8f0",
+            color:
+              livenessStage === "VERIFIED" || livenessStage === "PROMPT_BLINK" || livenessStage === "BLINK_DETECTED"
+                ? "#ffffff"
+                : faceDetected
+                ? "#111827"
+                : "#94a3b8",
             fontWeight: "800",
             fontSize: "14px",
             cursor: faceDetected && !loading ? "pointer" : "not-allowed",
-            boxShadow: faceDetected ? "0 4px 14px rgba(255, 202, 8, 0.45)" : "none",
+            boxShadow: faceDetected ? "0 4px 14px rgba(0,0,0,0.15)" : "none",
             transition: "all 0.25s ease",
             display: "inline-flex",
             alignItems: "center",
@@ -467,9 +564,17 @@ export default function SelfieCapture({
             <>
               <span>⏳</span> Verifying Biometric Face AI...
             </>
+          ) : livenessStage === "VERIFIED" ? (
+            <>
+              <span>✨</span> Liveness Verified! Matching Face...
+            </>
+          ) : livenessStage === "PROMPT_BLINK" || livenessStage === "BLINK_DETECTED" ? (
+            <>
+              <span>👀</span> Please Blink Eyes to Verify Liveness
+            </>
           ) : faceDetected ? (
             <>
-              <span>📸</span> Verify My Face & Mark Attendance
+              <span>🟡</span> Look at Camera with Eyes Open
             </>
           ) : (
             <>
@@ -479,8 +584,7 @@ export default function SelfieCapture({
         </button>
 
         <p style={{ margin: "10px 0 0 0", color: "#64748b", fontSize: "11.5px" }}>
-          🛡️ <strong>Anti-Proxy Protection:</strong> Facial geometry is verified against your registered college profile photo.
-          Walls, photos of photos, or other students are strictly rejected.
+          🛡️ <strong>Anti-Spoofing & Liveness Protection:</strong> Active eye-blink verification prevents printed photographs, screen photos, or closed-eye proxy attempts.
         </p>
       </div>
 

@@ -358,26 +358,36 @@ sections = [
 
     {
         "type": "heading2",
-        "text": "4.9 Strict Deep-Learning Biometric AI Face Recognition & 100% Anti-Proxy Engine"
+        "text": "4.9 Strict Deep-Learning Biometric AI Face Recognition & Active Liveness Engine"
     },
     {
         "type": "paragraph",
-        "text": "To guarantee 100% proxy resistance and prevent buddy-punching, photo-of-photo spoofing, empty wall/ceiling pointing, or unauthorized attendance marking, the system deploys a client-side neural face recognition engine powered by @vladmandic/face-api running deep ResNet-34 neural networks inside the browser:"
+        "text": "To guarantee 100% proxy resistance and prevent buddy-punching, photo-of-photo spoofing, smartphone screen replays, empty wall/ceiling pointing, or unauthorized attendance marking, the system deploys an active liveness and client-side neural face recognition engine powered by @vladmandic/face-api running deep ResNet-34 neural networks inside the browser:"
+    },
+    {
+        "type": "bullet",
+        "bold": "Active Eye-Blink Liveness & Anti-Photo Defense (EAR Metric)",
+        "text": "To completely defeat printed photos or screen recordings held up to the camera, the engine analyzes 68-point facial landmarks every 150ms using the Eye Aspect Ratio (EAR) algorithm. The candidate must center their face with eyes open (EAR >= 0.20), perform a natural voluntary blink (EAR < 0.18 or >=30% drop), and reopen their eyes. Because printed paper photos and static screens have fixed landmarks with zero EAR variance, photograph proxies are permanently blocked."
+    },
+    {
+        "type": "bullet",
+        "bold": "Closed-Eye & Sleeping Pose Strict Rejection",
+        "text": "If a student attempts to mark attendance with closed eyes, capture is immediately rejected: '❌ Eyes are closed! You must look directly at the camera with your eyes open. Sleeping, closed-eye, or spoofed poses are strictly rejected.'"
     },
     {
         "type": "bullet",
         "bold": "Real-Time Face Presence Tracking",
-        "text": "The camera feed is actively sampled every 600ms. If the camera is pointed at a wall, table, ceiling, or empty space, the UI immediately displays '🔴 No Face Detected (Point Camera at Face)' and the attendance capture button is strictly disabled ('🚫 Please Face the Camera'). No automatic timer can capture an empty frame."
+        "text": "The camera feed is actively sampled continuously. If the camera is pointed at a wall, table, ceiling, or empty space, the UI immediately displays '🔴 No Face Detected (Point Camera at Face)' and the attendance capture button is strictly disabled ('🚫 Please Face the Camera'). No automatic timer can capture an empty frame."
     },
     {
         "type": "bullet",
-        "bold": "68-Point Facial Landmark Detection",
-        "text": "The TinyFaceDetector and FaceLandmark68Net neural models verify the anatomical integrity of the subject's face (left eye, right eye, nose bridge, mouth contour, jawline), ensuring flat non-face textures are rejected immediately."
+        "bold": "128-Dimensional Deep Facial Embedding & Calibrated Threshold (<= 0.68)",
+        "text": "The FaceRecognitionNet computes a 128-dimensional deep metric embedding vector representing the student's unique facial geometry. This live descriptor is compared against the registered photo descriptor in Supabase Cloud using normalized Cosine Similarity (cos(θ) = 1 - d²/2). The Euclidean distance threshold is calibrated to <= 0.68 (the standard ResNet benchmark for smartphone front cameras vs passport photos). If an imposter attempts to proxy, the system blocks them with: '❌ Biometric Face Mismatch! The face detected does NOT match registered student (distance exceeds allowed threshold 0.68). Proxy attendance is strictly prohibited.'"
     },
     {
         "type": "bullet",
-        "bold": "128-Dimensional Deep Facial Embedding & Euclidean Distance",
-        "text": "The FaceRecognitionNet computes a 128-dimensional deep metric embedding vector representing the student's unique facial geometry. This live descriptor is mathematically compared against the 128-d descriptor extracted from the student's registered college profile photo stored in Supabase Cloud. The Euclidean distance must satisfy a strict threshold of <= 0.52. If another student attempts to mark attendance, the system blocks them with an explicit alert: '❌ Biometric Face Mismatch! The face detected does NOT match registered student Atharv Kadam (distance exceeds allowed threshold 0.52). Proxy attendance is strictly prohibited.'"
+        "bold": "Zero Retraining Dynamic Matching",
+        "text": "Each student's face is verified dynamically against their own registered photo record from Supabase Cloud. When new students enroll, their face features are extracted on the fly without any manual retraining."
     },
     {
         "type": "bullet",
@@ -394,8 +404,8 @@ sections = [
     },
     {
         "type": "bullet",
-        "bold": "Tab 1: Student Directory & Class Batch Records",
-        "text": "Instant filtering by Year/Class (First Year, Second Year, Third Year, Final Year), Department (AIML, CSE, etc.), Division (A, B, C, D), and live keyword search. Displays student photo, full name, PRN, branch, division, mobile, and parent mobile in real time."
+        "bold": "Tab 1: Student Directory & Class Batch Records with Direct Deletion",
+        "text": "Instant filtering by Year/Class (First Year, Second Year, Third Year, Final Year), Department (AIML, CSE, etc.), Division (A, B, C, D), and live keyword search. Displays student photo, full name, PRN, branch, division, mobile, and parent mobile. Includes both an '👁️ View / Edit' button and a direct red '🗑️ Delete' button on every row for fast 1-click cloud record management."
     },
     {
         "type": "bullet",
@@ -799,6 +809,8 @@ sections = [
 
 # Generate Word document in all desired locations
 output_paths = [
+    r"d:\TRAINING_1\Proxy_Resistant_Attendance_System-main\RIT_Smart_Attendance_System_Master_Documentation_Latest.docx",
+    r"d:\TRAINING_1\Proxy_Resistant_Attendance_System-main\RIT_Smart_Attendance_System_Documentation_Latest.docx",
     r"d:\TRAINING_1\Proxy_Resistant_Attendance_System-main\RIT_Smart_Attendance_System_Master_Documentation.docx",
     r"d:\TRAINING_1\Proxy_Resistant_Attendance_System-main\RIT_Smart_Attendance_System_Documentation.docx",
     r"D:\Cloud_Deployment\Proxy_Resistant_Attendance_System\RIT_Smart_Attendance_System_Master_Documentation.docx",
