@@ -127,6 +127,9 @@ export default function Dashboard() {
   const [selectedTimeSlot, setSelectedTimeSlot] =
     useState("");
 
+  // 📍 Geofencing Radius (Default 350m: accounts for Laptop Wi-Fi vs Smartphone GPS offset)
+  const [geofenceRadius, setGeofenceRadius] = useState<number>(350);
+
   const intervalRef = useRef<any>(null);
   const liveIntervalRef = useRef<any>(null);
 
@@ -209,6 +212,7 @@ export default function Dashboard() {
               subject: selectedSubject,
               lat,
               lng,
+              geofence_radius: geofenceRadius,
             });
             currentSession = result.session_id;
             currentQrToken = result.qr_token;
@@ -665,6 +669,29 @@ export default function Dashboard() {
               )}
           </select>
 
+          {/* 📍 Classroom Geofencing Mode (Default: 350m Laptop & Mobile Sync) */}
+          <div style={{ margin: "14px 0 10px 0", textAlign: "left" }}>
+            <label style={{ fontSize: "12px", fontWeight: "750", color: "#374151", display: "block", marginBottom: "4px" }}>
+              📍 Classroom Geofencing Mode
+            </label>
+            <select
+              value={geofenceRadius}
+              onChange={(e) => setGeofenceRadius(Number(e.target.value))}
+              disabled={attendanceActive}
+              style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid #d1d5db", fontSize: "13px", boxSizing: "border-box" }}
+            >
+              <option value={350}>🏢 Campus Building & Laptop Wi-Fi (350m - Recommended)</option>
+              <option value={500}>🏫 Wide Campus & Lecture Hall (500m)</option>
+              <option value={100}>🔒 Strict GPS Geofence (100m)</option>
+              <option value={0}>🌐 Flexible / Testing Demo Mode (No Distance Limit)</option>
+            </select>
+            <span style={{ fontSize: "11px", color: "#6b7280", display: "block", marginTop: "3px" }}>
+              {geofenceRadius === 0
+                ? "Bypasses distance verification for remote testing / demos."
+                : `Allows up to ${geofenceRadius}m to bridge laptop Wi-Fi with phone GPS.`}
+            </span>
+          </div>
+
           {/* START / STOP */}
           <button
             onClick={toggleSession}
@@ -776,7 +803,7 @@ export default function Dashboard() {
                 }}
               >
                 <p style={{ margin: 0, fontSize: "11px", color: "#166534", fontWeight: "750" }}>
-                  📍 CLASSROOM GEOFENCE: 60M PERIMETER ACTIVE
+                  📍 CLASSROOM GEOFENCE: {geofenceRadius === 0 ? "FLEXIBLE DEMO MODE (NO DISTANCE LIMIT)" : `${geofenceRadius}M PERIMETER ACTIVE (LAPTOP & MOBILE SYNCED)`}
                 </p>
                 <p style={{ margin: "4px 0", fontSize: "16px", color: "#14532d", fontWeight: "800" }}>
                   🔑 Live Classroom PIN:{" "}

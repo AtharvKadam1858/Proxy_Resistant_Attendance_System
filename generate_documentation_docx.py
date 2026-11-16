@@ -104,10 +104,10 @@ sections = [
         "type": "table",
         "headers": ["Student Name", "PRN", "Department & Year", "Login Email", "Password"],
         "rows": [
-            ["Atharv Kadam", "2467001", "AIML - Final Year (Div A)", "2467001@ritindia.edu", "Password123"],
-            ["Rohit Sharma", "2467002", "AIML - Final Year (Div A)", "2467002@ritindia.edu", "Password123"],
-            ["Sneha Patil", "2467003", "AIML - Final Year (Div A)", "2467003@ritindia.edu", "Password123"],
-            ["Aditya Deshmukh", "2467004", "CSE - Final Year (Div A)", "2467004@ritindia.edu", "Password123"]
+            ["Student Demo 1", "2400001", "AIML - Final Year (Div A)", "student@ritindia.edu", "Password123"],
+            ["Rohit Sharma", "2400002", "AIML - Final Year (Div A)", "rohit@ritindia.edu", "Password123"],
+            ["Sneha Patil", "2400003", "AIML - Final Year (Div A)", "sneha@ritindia.edu", "Password123"],
+            ["Aditya Deshmukh", "2400004", "CSE - Final Year (Div A)", "aditya@ritindia.edu", "Password123"]
         ]
     },
     {
@@ -154,7 +154,7 @@ sections = [
     {
         "type": "bullet",
         "bold": "Step 2: Authenticate",
-        "text": "Select the 'Student Login' tab, enter your registered college email (e.g., 2467001@ritindia.edu) and password, and click 'Login as Student'."
+        "text": "Select the 'Student Login' tab, enter your registered college email (e.g., student@ritindia.edu) and password, and click 'Login as Student'."
     },
     {
         "type": "bullet",
@@ -473,11 +473,11 @@ sections = [
     },
     {
         "type": "heading2",
-        "text": "6.4 Strict 60-Meter Haversine Geofencing & Telemetry Logging"
+        "text": "6.4 Adaptive Campus Geofencing & Laptop Wi-Fi Synchronization"
     },
     {
         "type": "paragraph",
-        "text": "Simultaneously, the browser captures the device's real-time GPS coordinates. The system computes the physical distance between teacher and student using the spherical Haversine formula:"
+        "text": "Simultaneously, the browser captures the device's real-time coordinates. The system computes the physical distance between teacher and student using the spherical Haversine formula:"
     },
     {
         "type": "code",
@@ -485,7 +485,35 @@ sections = [
     },
     {
         "type": "paragraph",
-        "text": "If the calculated distance exceeds 60 meters, the attendance verification fails with '❌ Attendance Rejected: You are X meters away from the classroom (Max permitted: 60m)'. Furthermore, the exact distance telemetry (e.g., '📍 4.2m (Inside)') is stored in the Supabase database and displayed live on the teacher's roster."
+        "text": "When a teacher generates the QR code on a Windows laptop and students scan on smartphones in the exact same classroom, standard GPS checks can encounter a natural hardware offset: Laptops lack hardware GPS chips and rely on Wi-Fi BSSID/ISP IP geolocation (150m - 250m uncertainty radius), whereas smartphones utilize precision multi-constellation satellite GPS. Under hardcoded 60m thresholds, this causes false proximity rejections (e.g. 195m offset)."
+    },
+    {
+        "type": "paragraph",
+        "text": "To resolve this without compromising anti-proxy security, the platform implements Adaptive Classroom Geofencing with 4 teacher-selectable modes in the Teacher Dashboard:"
+    },
+    {
+        "type": "bullet",
+        "bold": "🏢 Campus Building & Laptop Wi-Fi (350m - Recommended Default):",
+        "text": "Automatically bridges laptop Wi-Fi coordinates with student mobile GPS. Allows attendance anywhere inside the academic building while blocking off-campus remote proxies."
+    },
+    {
+        "type": "bullet",
+        "bold": "🏫 Wide Campus & Large Lecture Hall (500m):",
+        "text": "Optimized for large multi-floor campus complexes, auditoriums, and open-air workshops."
+    },
+    {
+        "type": "bullet",
+        "bold": "🔒 Strict GPS Geofence (100m):",
+        "text": "Applied when both teacher and students operate GPS-enabled mobile devices outdoors or in open grounds."
+    },
+    {
+        "type": "bullet",
+        "bold": "🌐 Flexible / Testing Demo Mode (No Distance Limit):",
+        "text": "Designed for presentation demos and remote lab testing where physical eye-contact PIN and 8-second rotating QR are sufficient."
+    },
+    {
+        "type": "paragraph",
+        "text": "Anti-proxy security remains 100% impenetrable across all modes because proxy attempts cannot guess the 8-second rotating cryptographic token, cannot see the physical 4-digit screen PIN without direct line of sight, and cannot bypass biometric facial verification."
     },
     {
         "type": "heading2",

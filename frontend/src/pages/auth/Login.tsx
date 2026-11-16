@@ -381,7 +381,7 @@ export default function Login() {
 
           <input
             type="email"
-            placeholder={role === "student" ? "Student Email (e.g. 2467001@ritindia.edu)" : "Email"}
+            placeholder={role === "student" ? "Student College Email (e.g. student@ritindia.edu)" : "College Email"}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={loading}
@@ -445,7 +445,7 @@ export default function Login() {
               <label>Student PRN *</label>
               <input
                 type="text"
-                placeholder="e.g. 2467012"
+                placeholder="Enter Student PRN / Roll No"
                 value={regForm.prn}
                 onChange={(e) => setRegForm({ ...regForm, prn: e.target.value })}
                 required
@@ -457,7 +457,7 @@ export default function Login() {
               <label>Full Name *</label>
               <input
                 type="text"
-                placeholder="e.g. Aarav Mehta"
+                placeholder="e.g. Student Name"
                 value={regForm.full_name}
                 onChange={(e) => setRegForm({ ...regForm, full_name: e.target.value })}
                 required
@@ -469,7 +469,7 @@ export default function Login() {
               <label>College Email *</label>
               <input
                 type="email"
-                placeholder="e.g. 2467012@ritindia.edu"
+                placeholder="e.g. student@ritindia.edu"
                 value={regForm.email}
                 onChange={(e) => setRegForm({ ...regForm, email: e.target.value })}
                 required

@@ -211,6 +211,7 @@ export async function startAttendanceSession(params: {
   subject: string;
   lat?: number;
   lng?: number;
+  geofence_radius?: number;
 }) {
   const sessionId = crypto.randomUUID();
   const qrToken = crypto.randomUUID();
@@ -218,8 +219,9 @@ export async function startAttendanceSession(params: {
   const now = new Date();
   const todayStr = now.toISOString().split("T")[0];
   const timeStr = now.toTimeString().split(" ")[0];
+  const radius = params.geofence_radius !== undefined ? params.geofence_radius : 350;
 
-  const payload = {
+  const payload: any = {
     session_id: sessionId,
     qr_token: qrToken,
     classroom_pin: classroomPin,
@@ -231,6 +233,7 @@ export async function startAttendanceSession(params: {
     start_time: timeStr,
     lat: params.lat || null,
     lng: params.lng || null,
+    geofence_radius: radius,
     status: "ACTIVE",
   };
 
@@ -380,9 +383,14 @@ export async function verifySessionQR(
 
   const session = sessions[0];
 
-  // 2. Strict Geofencing Verification (Max 60 meters classroom radius)
+  // 2. Adaptive Campus Building & Device Geofencing (Default: 350m, bridges Laptop Wi-Fi vs Phone GPS offset)
   let distanceMeters: number | null = null;
+  const allowedRadius = session.geofence_radius !== null && session.geofence_radius !== undefined
+    ? Number(session.geofence_radius)
+    : 350;
+
   if (
+    allowedRadius > 0 &&
     session.lat !== null &&
     session.lng !== null &&
     studentLat !== undefined &&
@@ -397,10 +405,10 @@ export async function verifySessionQR(
       Number(studentLng)
     );
 
-    if (distanceMeters > 60) {
+    if (distanceMeters > allowedRadius) {
       return {
         success: false,
-        message: `❌ Classroom Proximity Violation: You are ${distanceMeters}m away from the classroom (Allowed limit: 60m). You must be physically inside the class.`,
+        message: `❌ Classroom Proximity Violation: You are ${distanceMeters}m away from the classroom (Allowed limit: ${allowedRadius}m). You must be physically inside the class perimeter.`,
         distance: distanceMeters,
       };
     }
