@@ -674,6 +674,41 @@ export default function ScanQR() {
                 </button>
               </div>
             )}
+
+            {/* 🧪 Immediate Biometric AI Face Matcher Diagnostic Button */}
+            {!cameraActive && (
+              <div style={{ marginTop: "20px", paddingTop: "16px", borderTop: "1px dashed #e2e8f0" }}>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await stopScanner();
+                    setSessionId("DEMO_VERIFY_" + Date.now());
+                    setShowSelfie(true);
+                  }}
+                  style={{
+                    width: "100%",
+                    background: "#f0fdf4",
+                    border: "1.5px solid #86efac",
+                    color: "#166534",
+                    padding: "11px 16px",
+                    borderRadius: "10px",
+                    fontWeight: "750",
+                    fontSize: "13.5px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    boxShadow: "0 2px 6px rgba(34, 197, 94, 0.15)",
+                  }}
+                >
+                  <span>🧪</span> Test Biometric AI Face Matcher (Front Camera)
+                </button>
+                <p style={{ margin: "8px 0 0 0", fontSize: "11.5px", color: "#64748b" }}>
+                  Verify that your registered face is matched and that pointing at a wall or another person is strictly rejected.
+                </p>
+              </div>
+            )}
           </>
         )}
       </div>

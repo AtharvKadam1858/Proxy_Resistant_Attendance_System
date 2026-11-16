@@ -238,6 +238,17 @@ export default function SelfieCapture({
       setStatusMessage("✅ Biometric Identity 100% Confirmed! Recording Attendance...");
       setVerificationFeedback("Face matches registered student. Updating cloud database...");
 
+      if (sessionId.startsWith("DEMO_VERIFY_")) {
+        alert(
+          `✅ Biometric Verification Test Passed!\n\n` +
+          `Your live face strictly matches your registered college photo with high confidence.\n\n` +
+          `Anti-Proxy Protection is 100% active.`
+        );
+        stopCamera();
+        onVerified(studentName);
+        return;
+      }
+
       const cloudResult = await markAttendanceForStudent(sessionId, prn, distanceMeters);
       stopCamera();
       onVerified(cloudResult.name || studentName);
