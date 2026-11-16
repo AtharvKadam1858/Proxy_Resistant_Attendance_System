@@ -373,11 +373,19 @@ export default function Login() {
           </div>
 
           <input
-            type="email"
-            placeholder={role === "student" ? "Student College Email (e.g. student@ritindia.edu)" : "College Email"}
+            type="text"
+            placeholder={
+              role === "student"
+                ? "Student Email or PRN (e.g. 2467001@ritindia.edu or 2467001)"
+                : role === "teacher"
+                ? "Faculty Email or Teacher ID (e.g. teacher@ritindia.edu or TCH001)"
+                : "Admin Email or Admin ID (e.g. admin@ritindia.edu or ADM001)"
+            }
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={loading}
+            autoCapitalize="none"
+            autoCorrect="off"
           />
 
           <input

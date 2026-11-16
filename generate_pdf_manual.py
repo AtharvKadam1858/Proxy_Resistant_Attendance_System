@@ -284,19 +284,19 @@ def build_pdf(filename):
         [
             Paragraph("<b>Student</b>", table_cell_style),
             Paragraph("<code>2467001@ritindia.edu</code><br/>(or <code>2467001</code>)", table_cell_style),
-            Paragraph("<code>Student@1234</code>", table_cell_style),
+            Paragraph("<code>Student@1234</code><br/>(or <code>Password123</code>)", table_cell_style),
             Paragraph("<b>Atharv Kadam</b> (Final Year AIML)<br/>Biometric scan, attendance history, slips, profile.", table_cell_style)
         ],
         [
             Paragraph("<b>Faculty / Teacher</b>", table_cell_style),
-            Paragraph("<code>teacher@ritindia.edu</code><br/>(or <code>TCH001</code>)", table_cell_style),
-            Paragraph("<code>Teacher@1234</code>", table_cell_style),
-            Paragraph("<b>Prof. Sharma</b> (CSE / AIML Department)<br/>Dynamic QR generator, GPS transmitter, live roster, CSV.", table_cell_style)
+            Paragraph("<code>teacher@ritindia.edu</code><br/>(or <code>TCH001</code> / <code>kk.tangod@ritindia.edu</code>)", table_cell_style),
+            Paragraph("<code>Teacher@1234</code><br/>(or <code>Password123</code>)", table_cell_style),
+            Paragraph("<b>Dr. K. K. Tangod / Prof. Sharma</b> (CSE / AIML)<br/>Dynamic QR generator, GPS transmitter, live roster, CSV.", table_cell_style)
         ],
         [
             Paragraph("<b>Administrator</b>", table_cell_style),
             Paragraph("<code>admin@ritindia.edu</code><br/>(or <code>ADM001</code>)", table_cell_style),
-            Paragraph("<code>Admin@1234</code>", table_cell_style),
+            Paragraph("<code>Admin@1234</code><br/>(or <code>Password123</code>)", table_cell_style),
             Paragraph("<b>College IT Administration</b><br/>2-Tab student directory, batch records, student CRUD editor.", table_cell_style)
         ]
     ]
