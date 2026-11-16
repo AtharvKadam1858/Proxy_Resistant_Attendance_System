@@ -1,27 +1,8 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import "../../styles/login.css";
 import RITLogo from "../../assets/RIT_logo.jpeg";
 
-import { initializeApp } from "firebase/app";
-import {
-  getAuth,
-  signInWithEmailAndPassword
-} from "firebase/auth";
-
-import { API_URL } from "../../config";
-import { loginUserWithSupabase, registerStudent } from "../../services/supabase";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyDsJPGm7CwJEE2o2kI0NAiSKia0YQxEvMs",
-  authDomain: "smart-attendance-login.firebaseapp.com",
-  projectId: "smart-attendance-login",
-  storageBucket: "smart-attendance-login.firebasestorage.app",
-  messagingSenderId: "198869708642",
-  appId: "1:198869708642:web:b762ec97baf3bb9c97863b6"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
+import { loginUserWithSupabase, registerStudent, resetUserPasswordWithVerification } from "../../services/supabase";
 
 export default function Login() {
   const [role, setRole] = useState("teacher");
@@ -29,6 +10,61 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Clear previous session on visit to guarantee clean authentication
+  useEffect(() => {
+    localStorage.clear();
+  }, []);
+
+  // 🔑 Forgot / Reset Password State
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotRole, setForgotRole] = useState("student");
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotKey, setForgotKey] = useState(""); // PRN for student, Teacher ID, Admin ID
+  const [forgotNewPass, setForgotNewPass] = useState("");
+  const [forgotConfirmPass, setForgotConfirmPass] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState("");
+
+  const handleForgotSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotMsg("");
+
+    if (!forgotEmail || !forgotKey || !forgotNewPass) {
+      setForgotMsg("❌ Please fill in all required fields.");
+      return;
+    }
+    if (forgotNewPass.length < 6) {
+      setForgotMsg("❌ Password must be at least 6 characters long.");
+      return;
+    }
+    if (forgotNewPass !== forgotConfirmPass) {
+      setForgotMsg("❌ Passwords do not match. Please verify.");
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      const res = await resetUserPasswordWithVerification(
+        forgotRole,
+        forgotEmail,
+        forgotKey,
+        forgotNewPass
+      );
+      setForgotMsg(`✅ ${res.message}`);
+      setTimeout(() => {
+        setEmail(forgotEmail);
+        setPassword(forgotNewPass);
+        setRole(forgotRole);
+        setShowForgotModal(false);
+        setMsg("✅ Password reset successfully! Click Login to enter your portal.");
+      }, 1800);
+    } catch (err: any) {
+      setForgotMsg(err?.message || "❌ Failed to reset password.");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
 
   // Self-Registration State & Comprehensive Details
   const [isRegistering, setIsRegistering] = useState(false);
@@ -98,67 +134,33 @@ export default function Login() {
   const login = async () => {
     setMsg("");
 
-    if (!email || !password) {
-      setMsg("Please enter email and password");
+    const cleanEmail = email.trim();
+    const cleanPassword = password.trim();
+
+    if (!cleanEmail) {
+      setMsg("❌ Please enter your registered college email.");
+      return;
+    }
+
+    if (!cleanPassword) {
+      setMsg("❌ Please enter your password.");
       return;
     }
 
     setLoading(true);
 
     try {
-      let data: any = null;
-
-      // 1. Direct Cloud Database (Supabase) authentication (Instant 50ms response)
-      try {
-        data = await loginUserWithSupabase(email, role, password);
-      } catch (dbErr: any) {
-        console.warn("Checking legacy credentials fallback...", dbErr);
-      }
-
-      // 2. Firebase Authentication Fallback (if legacy account)
-      if (!data || !data.success) {
-        try {
-          const cred = await signInWithEmailAndPassword(
-            auth,
-            email,
-            password
-          );
-          const token = await cred.user.getIdToken();
-          const response = await fetch(
-            `${API_URL}/api/auth/login`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${token}`
-              },
-              body: JSON.stringify({
-                email: cred.user.email || email,
-                role: role
-              })
-            }
-          );
-          if (response.ok) {
-            data = await response.json();
-          }
-        } catch (fbErr: any) {
-          console.warn("Authentication check completed:", fbErr);
-        }
-      }
+      // 100% Strict Database Authentication - Zero bypass!
+      const data = await loginUserWithSupabase(cleanEmail, role, cleanPassword);
 
       if (!data || !data.success) {
-        setLoading(false);
-        setMsg("Account not found in cloud database. Please verify your email or register below.");
-        return;
+        throw new Error("❌ Invalid credentials. Access denied.");
       }
 
       if (role === "student") {
         const student = data.student;
-
         if (!student || !student.prn) {
-          throw new Error(
-            "Student PRN was not returned by server."
-          );
+          throw new Error("Student PRN was not returned by server.");
         }
 
         localStorage.setItem("role", "student");
@@ -173,11 +175,8 @@ export default function Login() {
 
       if (role === "teacher") {
         const teacher = data.teacher;
-
         if (!teacher || !teacher.teacher_id) {
-          throw new Error(
-            "Teacher ID was not returned by server."
-          );
+          throw new Error("Teacher ID was not returned by server.");
         }
 
         localStorage.setItem("role", "teacher");
@@ -191,11 +190,8 @@ export default function Login() {
 
       if (role === "admin") {
         const admin = data.admin;
-
         if (!admin || !admin.admin_id) {
-          throw new Error(
-            "Admin ID was not returned by server."
-          );
+          throw new Error("Admin ID was not returned by server.");
         }
 
         localStorage.setItem("role", "admin");
@@ -207,11 +203,8 @@ export default function Login() {
         return;
       }
     } catch (err: any) {
-      console.error("Login error:", err);
-      setMsg(
-        err?.message ||
-        "Login failed. Please check your credentials."
-      );
+      console.error("Login authentication rejected:", err);
+      setMsg(err?.message || "❌ Login failed. Invalid email or password.");
       setLoading(false);
     }
   };
@@ -395,13 +388,40 @@ export default function Login() {
             disabled={loading}
           />
 
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "4px", marginBottom: "14px" }}>
+            <span style={{ fontSize: "11.5px", color: "#6b7280" }}>
+              🔒 100% Database Verified
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setShowForgotModal(true);
+                setForgotRole(role);
+                setForgotEmail(email);
+                setForgotMsg("");
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#b45309",
+                fontWeight: "750",
+                fontSize: "12.5px",
+                cursor: "pointer",
+                padding: "2px 4px",
+                textDecoration: "underline"
+              }}
+            >
+              🔑 Forgot Password?
+            </button>
+          </div>
+
           <button
             type="button"
             className="login-btn"
             onClick={login}
             disabled={loading}
           >
-            {loading ? "Authenticating..." : `Login as ${role.charAt(0).toUpperCase() + role.slice(1)}`}
+            {loading ? "Authenticating with Cloud DB..." : `Login as ${role.charAt(0).toUpperCase() + role.slice(1)}`}
           </button>
 
           <div style={{ marginTop: "18px" }}>
@@ -679,6 +699,228 @@ export default function Login() {
             {loading ? "Registering Profile..." : "Complete Registration & Enter Portal"}
           </button>
         </form>
+      )}
+
+      {/* 🔑 FORGOT / RESET PASSWORD MODAL */}
+      {showForgotModal && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.65)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999,
+          padding: "16px"
+        }}>
+          <div style={{
+            background: "#ffffff",
+            borderRadius: "16px",
+            maxWidth: "440px",
+            width: "100%",
+            boxShadow: "0 20px 40px rgba(0,0,0,0.25)",
+            overflow: "hidden",
+            border: "1px solid #e2e8f0"
+          }}>
+            <div style={{
+              background: "linear-gradient(135deg, #1e3a8a 0%, #0284c7 100%)",
+              padding: "18px 20px",
+              color: "#ffffff",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center"
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "17px", fontWeight: "750" }}>🔑 Reset Account Password</h3>
+                <p style={{ margin: "2px 0 0 0", fontSize: "12px", opacity: 0.9 }}>
+                  100% Secure Database-Verified Self-Service Recovery
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowForgotModal(false)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#ffffff",
+                  fontSize: "22px",
+                  cursor: "pointer",
+                  padding: "0 4px"
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleForgotSubmit} style={{ padding: "20px" }}>
+              <div style={{ marginBottom: "14px" }}>
+                <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
+                  Select Account Role *
+                </label>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  {(["student", "teacher", "admin"] as const).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setForgotRole(r)}
+                      style={{
+                        flex: 1,
+                        padding: "7px 10px",
+                        fontSize: "12px",
+                        fontWeight: "700",
+                        borderRadius: "6px",
+                        border: "1px solid",
+                        borderColor: forgotRole === r ? "#ffca08" : "#d1d5db",
+                        background: forgotRole === r ? "#fffbeb" : "#f9fafb",
+                        color: forgotRole === r ? "#92400e" : "#4b5563",
+                        cursor: "pointer"
+                      }}
+                    >
+                      {r === "student" ? "Student" : r === "teacher" ? "Teacher" : "Admin"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
+                  Registered College Email *
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="e.g. yourname@ritindia.edu"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    borderRadius: "7px",
+                    border: "1px solid #d1d5db",
+                    fontSize: "13px",
+                    boxSizing: "border-box"
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
+                  {forgotRole === "student" ? "Security Verification: Student PRN *" : forgotRole === "teacher" ? "Security Verification: Teacher ID *" : "Security Verification: Admin ID *"}
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder={forgotRole === "student" ? "Enter your PRN (or registered phone)" : forgotRole === "teacher" ? "Enter Teacher ID (e.g. TCH001)" : "Enter Admin ID (e.g. ADM001)"}
+                  value={forgotKey}
+                  onChange={(e) => setForgotKey(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    borderRadius: "7px",
+                    border: "1px solid #d1d5db",
+                    fontSize: "13px",
+                    boxSizing: "border-box"
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
+                  New Password (min 6 characters) *
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Enter new password"
+                  value={forgotNewPass}
+                  onChange={(e) => setForgotNewPass(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    borderRadius: "7px",
+                    border: "1px solid #d1d5db",
+                    fontSize: "13px",
+                    boxSizing: "border-box"
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
+                  Confirm New Password *
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Re-enter new password"
+                  value={forgotConfirmPass}
+                  onChange={(e) => setForgotConfirmPass(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    borderRadius: "7px",
+                    border: "1px solid #d1d5db",
+                    fontSize: "13px",
+                    boxSizing: "border-box"
+                  }}
+                />
+              </div>
+
+              {forgotMsg && (
+                <div style={{
+                  padding: "10px 12px",
+                  borderRadius: "7px",
+                  fontSize: "12.5px",
+                  fontWeight: "600",
+                  marginBottom: "14px",
+                  background: forgotMsg.startsWith("✅") ? "#f0fdf4" : "#fef2f2",
+                  color: forgotMsg.startsWith("✅") ? "#166534" : "#991b1b",
+                  border: `1px solid ${forgotMsg.startsWith("✅") ? "#86efac" : "#fca5a5"}`
+                }}>
+                  {forgotMsg}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowForgotModal(false)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "1px solid #d1d5db",
+                    background: "#f3f4f6",
+                    color: "#374151",
+                    fontWeight: "700",
+                    fontSize: "13px",
+                    cursor: "pointer"
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={forgotLoading}
+                  style={{
+                    flex: 2,
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: "#ffca08",
+                    color: "#000000",
+                    fontWeight: "800",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    boxShadow: "0 2px 8px rgba(255,202,8,0.3)"
+                  }}
+                >
+                  {forgotLoading ? "Verifying..." : "Reset & Save Password"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {loading && (

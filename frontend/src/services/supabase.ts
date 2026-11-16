@@ -44,17 +44,29 @@ export async function supabaseQuery(endpoint: string, options: RequestInit = {})
 
 export async function loginUserWithSupabase(email: string, role: string, password?: string) {
   const cleanEmail = email.trim().toLowerCase();
+  const cleanPass = (password || "").trim();
+
+  if (!cleanEmail) {
+    throw new Error("❌ Please enter your registered college email.");
+  }
+
+  if (!cleanPass) {
+    throw new Error("❌ Please enter your account password.");
+  }
 
   if (role === "student") {
     const data = await supabaseQuery(
       `students?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
     );
     if (!data || data.length === 0) {
-      throw new Error("Student account not found in database.");
+      throw new Error(`❌ No student account registered with email: ${cleanEmail}. Please verify your email or register below.`);
     }
     const student = data[0];
-    if (password && student.password_hash && student.password_hash !== password) {
-      throw new Error("Incorrect password. Please verify your credentials.");
+    if (!student.password_hash) {
+      throw new Error("❌ Account password not set. Please use 'Forgot Password?' below to set your password.");
+    }
+    if (student.password_hash.trim() !== cleanPass) {
+      throw new Error("❌ Incorrect password! Please enter the correct password for this account.");
     }
     return {
       success: true,
@@ -69,11 +81,14 @@ export async function loginUserWithSupabase(email: string, role: string, passwor
       `teachers?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
     );
     if (!data || data.length === 0) {
-      throw new Error("Teacher account not found in database.");
+      throw new Error(`❌ No faculty account registered with email: ${cleanEmail}. Please check the Teacher Login tab or contact admin.`);
     }
     const teacher = data[0];
-    if (password && teacher.password_hash && teacher.password_hash !== password) {
-      throw new Error("Incorrect password. Please verify your credentials.");
+    if (!teacher.password_hash) {
+      throw new Error("❌ Faculty password not set. Please use 'Forgot Password?' below to set your password.");
+    }
+    if (teacher.password_hash.trim() !== cleanPass) {
+      throw new Error("❌ Incorrect password! Please enter the correct faculty password.");
     }
     return {
       success: true,
@@ -88,11 +103,14 @@ export async function loginUserWithSupabase(email: string, role: string, passwor
       `admins?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
     );
     if (!data || data.length === 0) {
-      throw new Error("Admin account not found in database.");
+      throw new Error(`❌ No administrator account registered with email: ${cleanEmail}.`);
     }
     const admin = data[0];
-    if (password && admin.password_hash && admin.password_hash !== password) {
-      throw new Error("Incorrect password. Please verify your credentials.");
+    if (!admin.password_hash) {
+      throw new Error("❌ Admin password not set. Please use 'Forgot Password?' below to set your password.");
+    }
+    if (admin.password_hash.trim() !== cleanPass) {
+      throw new Error("❌ Incorrect password! Please enter the correct administrator password.");
     }
     return {
       success: true,
@@ -102,7 +120,85 @@ export async function loginUserWithSupabase(email: string, role: string, passwor
     };
   }
 
-  throw new Error("Invalid role selected.");
+  throw new Error("❌ Invalid role selected.");
+}
+
+export async function resetUserPasswordWithVerification(
+  role: string,
+  email: string,
+  verificationKey: string,
+  newPassword: string
+) {
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanKey = verificationKey.trim();
+  const cleanPass = newPassword.trim();
+
+  if (!cleanEmail) throw new Error("❌ Registered college email is required.");
+  if (!cleanKey) throw new Error("❌ Security verification ID (PRN / Teacher ID / Admin ID) is required.");
+  if (!cleanPass || cleanPass.length < 6) throw new Error("❌ New password must be at least 6 characters long.");
+
+  if (role === "student") {
+    const data = await supabaseQuery(
+      `students?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
+    );
+    if (!data || data.length === 0) {
+      throw new Error(`❌ No student account found with email: ${cleanEmail}`);
+    }
+    const student = data[0];
+    const keyMatch =
+      student.prn.toLowerCase() === cleanKey.toLowerCase() ||
+      (student.phone && student.phone.trim() === cleanKey);
+    if (!keyMatch) {
+      throw new Error("❌ Verification failed: PRN or Phone number does not match this student's registered record.");
+    }
+    await supabaseQuery(`students?prn=eq.${encodeURIComponent(student.prn)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ password_hash: cleanPass }),
+    });
+    return { success: true, message: "Student password reset successfully! You can now log in." };
+  }
+
+  if (role === "teacher") {
+    const data = await supabaseQuery(
+      `teachers?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
+    );
+    if (!data || data.length === 0) {
+      throw new Error(`❌ No faculty account found with email: ${cleanEmail}`);
+    }
+    const teacher = data[0];
+    const keyMatch =
+      teacher.teacher_id.toLowerCase() === cleanKey.toLowerCase() ||
+      (teacher.phone && teacher.phone.trim() === cleanKey);
+    if (!keyMatch) {
+      throw new Error("❌ Verification failed: Teacher ID or Phone number does not match this faculty record.");
+    }
+    await supabaseQuery(`teachers?teacher_id=eq.${encodeURIComponent(teacher.teacher_id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ password_hash: cleanPass }),
+    });
+    return { success: true, message: "Faculty password reset successfully! You can now log in." };
+  }
+
+  if (role === "admin") {
+    const data = await supabaseQuery(
+      `admins?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
+    );
+    if (!data || data.length === 0) {
+      throw new Error(`❌ No administrator account found with email: ${cleanEmail}`);
+    }
+    const admin = data[0];
+    const keyMatch = admin.admin_id.toLowerCase() === cleanKey.toLowerCase();
+    if (!keyMatch) {
+      throw new Error("❌ Verification failed: Admin ID does not match this record.");
+    }
+    await supabaseQuery(`admins?admin_id=eq.${encodeURIComponent(admin.admin_id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ password_hash: cleanPass }),
+    });
+    return { success: true, message: "Administrator password reset successfully! You can now log in." };
+  }
+
+  throw new Error("❌ Invalid role selected.");
 }
 
 export async function updateUserPassword(role: string, identifier: string, newPassword: string) {

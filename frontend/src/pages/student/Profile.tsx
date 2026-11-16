@@ -384,6 +384,66 @@ export default function Profile() {
           </button>
         </div>
 
+        {/* 🎓 Unified Student Portal Navigation Tabs */}
+        <div
+          style={{
+            display: "flex",
+            background: "#f1f5f9",
+            borderRadius: "12px",
+            padding: "5px",
+            margin: "16px 20px 14px 20px",
+            gap: "8px",
+            border: "1.5px solid #e2e8f0",
+            boxShadow: "inset 0 1px 3px rgba(0,0,0,0.06)",
+          }}
+        >
+          <button
+            type="button"
+            style={{
+              flex: 1,
+              padding: "11px 16px",
+              borderRadius: "9px",
+              border: "none",
+              fontSize: "14px",
+              fontWeight: "800",
+              cursor: "pointer",
+              transition: "all 0.25s ease",
+              background: "#ffca08",
+              color: "#000000",
+              boxShadow: "0 4px 12px rgba(255,202,8,0.4)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+            }}
+          >
+            <span>👤</span> Student Profile Section
+          </button>
+
+          <button
+            type="button"
+            onClick={() => navigate("/scan")}
+            style={{
+              flex: 1,
+              padding: "11px 16px",
+              borderRadius: "9px",
+              border: "none",
+              fontSize: "14px",
+              fontWeight: "800",
+              cursor: "pointer",
+              transition: "all 0.25s ease",
+              background: "transparent",
+              color: "#64748b",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+            }}
+          >
+            <span>📷</span> Scan QR Code
+          </button>
+        </div>
+
         {/* Profile Banner */}
         <div className="profile-banner">
           <img
