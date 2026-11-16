@@ -1007,7 +1007,7 @@ export default function Dashboard() {
                 alt="QR Code"
               />
 
-              {/* Classroom Geofencing & Anti-Proxy PIN Badge */}
+              {/* Classroom Geofencing & Anti-Proxy Protection Badge */}
               <div
                 style={{
                   background: "#f0fdf4",
@@ -1018,26 +1018,12 @@ export default function Dashboard() {
                   textAlign: "center",
                 }}
               >
-                <p style={{ margin: 0, fontSize: "11px", color: "#166534", fontWeight: "750" }}>
-                  📍 CLASSROOM GEOFENCE: {geofenceRadius === 0 ? "FLEXIBLE DEMO MODE (NO DISTANCE LIMIT)" : `${geofenceRadius}M PERIMETER ACTIVE (LAPTOP & MOBILE SYNCED)`}
+                <p style={{ margin: 0, fontSize: "12px", color: "#166534", fontWeight: "750" }}>
+                  📍 CLASSROOM GEOFENCE: {geofenceRadius === 0 ? "FLEXIBLE CAMPUS MODE" : `${geofenceRadius}M PERIMETER ACTIVE (PHYSICALLY INSIDE CLASS)`}
                 </p>
-                <p style={{ margin: "4px 0", fontSize: "16px", color: "#14532d", fontWeight: "800" }}>
-                  🔑 Live Classroom PIN:{" "}
-                  <span
-                    style={{
-                      background: "#ffffff",
-                      padding: "2px 8px",
-                      borderRadius: "4px",
-                      border: "1px solid #166534",
-                      letterSpacing: "3px",
-                    }}
-                  >
-                    {classroomPin || "----"}
-                  </span>
+                <p style={{ margin: "4px 0 0 0", fontSize: "11px", color: "#15803d", fontWeight: "600" }}>
+                  🛡️ Anti-Proxy Protection: Dynamic Rotating QR + GPS Proximity + AI Face Verification
                 </p>
-                <span style={{ fontSize: "11px", color: "#15803d" }}>
-                  (Students on lower floors cannot see this PIN & cannot proxy)
-                </span>
               </div>
             </>
           ) : (

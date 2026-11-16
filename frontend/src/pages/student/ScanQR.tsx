@@ -872,7 +872,7 @@ export default function ScanQR() {
                 <div><strong>PRN:</strong> {slipData.prn}</div>
                 <div><strong>Time & Date:</strong> {slipData.timeStr} ({new Date().toLocaleDateString("en-IN")})</div>
                 <div><strong>Classroom Distance:</strong> <span style={{ color: "#059669", fontWeight: "600" }}>📍 {slipData.distanceText}</span></div>
-                <div><strong>Security Verification:</strong> <span style={{ color: "#16a34a", fontWeight: "600" }}>✓ QR Token ✓ PIN ✓ Geofence ✓ Liveness</span></div>
+                <div><strong>Security Verification:</strong> <span style={{ color: "#16a34a", fontWeight: "600" }}>✓ Dynamic QR Token ✓ Classroom Geofence ✓ AI Facial Biometrics</span></div>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "18px" }}>
