@@ -489,10 +489,10 @@ export default function Login() {
             type="text"
             placeholder={
               role === "student"
-                ? "Student Email or PRN (e.g. 2467001@ritindia.edu or 2467001)"
+                ? "Enter College Email or PRN"
                 : role === "teacher"
-                ? "Faculty Email or Teacher ID (e.g. teacher@ritindia.edu or TCH001)"
-                : "Admin Email or Admin ID (e.g. admin@ritindia.edu or ADM001)"
+                ? "Enter Faculty Email or Teacher ID"
+                : "Enter Admin Email or Admin ID"
             }
             value={email}
             onChange={(e) => setEmail(e.target.value)}
