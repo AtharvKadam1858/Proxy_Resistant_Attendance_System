@@ -5,6 +5,7 @@ import SelfieCapture from "../../components/SelfieCapture";
 import { API_URL } from "../../config";
 import { verifySessionQR } from "../../services/supabase";
 import { dispatchAttendanceEmailNotification } from "../../services/emailService";
+import { loadFaceApiModels, preWarmStudentBiometrics } from "../../services/aiFaceRecognition";
 import RITLogo from "../../assets/RIT_logo.jpeg";
 
 export default function ScanQR() {
@@ -126,9 +127,15 @@ export default function ScanQR() {
     setCameraStarting(false);
   }, []);
 
-  // Proactively request student location upon mounting & clean up camera on unmount
+  // Proactively request student location upon mounting & pre-warm Face-API models & descriptor
   useEffect(() => {
     requestStudentLocation(false);
+    // ⚡ Pre-warm AI face recognition models & student reference photo descriptor
+    loadFaceApiModels().then(() => {
+      const prn = localStorage.getItem("prn");
+      if (prn) preWarmStudentBiometrics(prn).catch(() => {});
+    }).catch(() => {});
+
     return () => {
       stopScanner();
     };

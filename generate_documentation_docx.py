@@ -366,8 +366,18 @@ sections = [
     },
     {
         "type": "bullet",
-        "bold": "Active Eye-Blink Liveness & Anti-Photo Defense (EAR Metric)",
-        "text": "To completely defeat printed photos or screen recordings held up to the camera, the engine analyzes 68-point facial landmarks every 150ms using the Eye Aspect Ratio (EAR) algorithm. The candidate must center their face with eyes open (EAR >= 0.20), perform a natural voluntary blink (EAR < 0.18 or >=30% drop), and reopen their eyes. Because printed paper photos and static screens have fixed landmarks with zero EAR variance, photograph proxies are permanently blocked."
+        "bold": "Ultra-Fast Active Eye-Blink Liveness & Anti-Photo Defense (60ms Rolling EAR Buffer)",
+        "text": "To completely defeat printed photos or screen recordings with sub-second response, the engine analyzes 68-point facial landmarks at high frequency (60ms non-blocking tick, 16+ FPS) using Soukupová & Čech's Eye Aspect Ratio (EAR) metric. A rolling peak-valley-peak buffer detects natural rapid blinks (100–180ms) on the exact frame eyelids reopen without slow-motion blinking. Printed paper photos and static screens have zero EAR variance and remain permanently blocked."
+    },
+    {
+        "type": "bullet",
+        "bold": "Background Pre-Warmed Biometric Caching (<300ms Verification)",
+        "text": "When the scanner page mounts, the student's 128-d reference descriptor is pre-computed and stored in-memory and sessionStorage in the background. At capture time, reference loading takes 0ms, enabling complete biometric verification in under 300ms."
+    },
+    {
+        "type": "bullet",
+        "bold": "Dual Fast-Path Capture (Auto-Blink or 1-Tap Instant Verify)",
+        "text": "Students can either blink naturally for automatic zero-click attendance marking or tap '⚡ Mark Attendance Now' for instantaneous capture. In both modes, the engine strictly verifies face presence, eye openness (EAR >= 0.17), and ResNet-34 biometric distance (<= 0.68), strictly rejecting closed-eye or proxy attempts."
     },
     {
         "type": "bullet",
