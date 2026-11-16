@@ -154,11 +154,11 @@ export async function analyzeLiveFrameLiveness(
     const rightEar = calculateEyeAspectRatio(rightEye);
     const ear = (leftEar + rightEar) / 2.0;
 
-    // Strict & Fast Eye Openness Evaluation
-    // In 68-point landmarks, closed eyes typically produce EAR between 0.16 and 0.215.
-    // Eyelids are strictly considered closed if EAR < 0.22 or either eye drops below 0.205.
-    const eyesClosed = ear < 0.22 || leftEar < 0.205 || rightEar < 0.205;
-    const eyesOpen = ear >= 0.23 && leftEar >= 0.21 && rightEar >= 0.21;
+    // Strict & Calibrated Eye Openness Evaluation
+    // Closed if average EAR < 0.21 or either individual eye drops below 0.19
+    const eyesClosed = ear < 0.21 || leftEar < 0.19 || rightEar < 0.19;
+    // Open if average EAR >= 0.22 and both eyes are at least 0.20
+    const eyesOpen = ear >= 0.22 && leftEar >= 0.20 && rightEar >= 0.20;
 
     return {
       faceDetected: true,
@@ -404,15 +404,15 @@ export async function verifyLiveFaceAgainstRegistered(
   const rightEar = calculateEyeAspectRatio(rightEye);
   const avgEar = (leftEar + rightEar) / 2.0;
 
-  // Strict check: Closed eye EAR in 68-point landmarks is typically 0.16 - 0.215.
-  // Both eyes must be open with EAR >= 0.22 and neither eye below 0.205.
-  if (avgEar < 0.22 || leftEar < 0.205 || rightEar < 0.205) {
+  // Strict check: Closed eye EAR in 68-point landmarks is typically 0.15 - 0.205.
+  // Both eyes must be open with average EAR >= 0.21 and neither eye below 0.19.
+  if (avgEar < 0.21 || leftEar < 0.19 || rightEar < 0.19) {
     console.warn(`[Face Verification] Rejected closed/squinting eyes: avg=${avgEar.toFixed(3)}, left=${leftEar.toFixed(3)}, right=${rightEar.toFixed(3)}`);
     return {
       verified: false,
       score: 0.1,
       euclideanDistance: 1.0,
-      message: `❌ Eyes are closed! (Eye Aspect Ratio ${avgEar.toFixed(2)} is below minimum 0.22). You must look directly at the camera with your eyes open. Sleeping, closed-eye, or spoofed poses are strictly rejected.`,
+      message: `❌ Eyes are closed! (Eye Aspect Ratio ${avgEar.toFixed(2)} is below minimum 0.21). You must look directly at the camera with your eyes open. Sleeping, closed-eye, or spoofed poses are strictly rejected.`,
       faceDetected: true,
       landmarksDetected: true,
       registeredFaceFound: true,

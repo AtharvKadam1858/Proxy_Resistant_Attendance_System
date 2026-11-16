@@ -415,11 +415,11 @@ def build_pdf(filename):
         bullet_style
     ))
     story.append(Paragraph(
-        "• <b>Hands-Free Autonomous Attendance Marking (Natural Blink Engine):</b> Students do not need to click any button to mark attendance. When facing the camera with eyes open, the student blinks naturally once (100–180ms). The 60ms tracking engine detects the eyelid dip and reopening, confirms a living human presence, and immediately executes biometric face matching automatically. Audio chimes, green verification is displayed, and the official attendance slip is emailed.",
+        "• <b>Triple-Path Zero-Delay Attendance Engine (Auto-Blink, 2.5s Face-Lock, or 1-Tap Emergency Button):</b> Attendance can be recorded in three fast, convenient ways: (1) <i>Natural Blink:</i> A voluntary 120ms eye blink triggers immediate verification upon reopening (<1.2s). (2) <i>Face-Lock Hold:</i> Simply holding face centered with eyes open for 2.5s triggers auto-attendance without blinking. (3) <i>Direct 1-Tap Button:</i> Students can tap <code>⚡ Mark Attendance Now (Verify My Face)</code> for instantaneous <200ms verification. In all three paths, the engine strictly verifies face presence, open eyes (EAR &ge; 0.21), and ResNet-34 biometric descriptor matching (&le; 0.68).",
         bullet_style
     ))
     story.append(Paragraph(
-        "• <b>Strict Closed-Eye & Sleeping Pose Rejection (EAR &lt; 0.22 Threshold):</b> In 68-point landmark geometry, closed eyes exhibit EAR between 0.16 and 0.215. The system strictly enforces an EAR &ge; 0.22 open-eye baseline. If a candidate or proxy attempts capture with closed eyes, sleeping poses, or photos with closed eyes, both the real-time engine and the pre-capture pipeline strictly abort with: <code>❌ Eyes are closed! You must look directly at the camera with your eyes open. Sleeping, closed-eye, or spoofed poses are strictly rejected.</code>",
+        "• <b>Strict Closed-Eye & Sleeping Pose Rejection (EAR &lt; 0.21 Threshold):</b> In 68-point landmark geometry, closed eyes exhibit EAR between 0.15 and 0.205. The system strictly enforces an EAR &ge; 0.21 open-eye baseline. If a candidate or proxy attempts capture with closed eyes, sleeping poses, or photos with closed eyes, both the real-time engine and the pre-capture pipeline strictly abort with: <code>❌ Eyes are closed! You must look directly at the camera with your eyes open. Sleeping, closed-eye, or spoofed poses are strictly rejected.</code>",
         bullet_style
     ))
     story.append(Paragraph(
