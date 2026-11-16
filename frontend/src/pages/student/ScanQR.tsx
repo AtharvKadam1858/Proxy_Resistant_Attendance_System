@@ -18,6 +18,62 @@ export default function ScanQR() {
   const [activeCamIndex, setActiveCamIndex] = useState(0);
   const [verifiedDistance, setVerifiedDistance] = useState<number | null>(null);
 
+  // 📍 Proactive Student Geolocation State
+  const [studentCoords, setStudentCoords] = useState<{ lat: number; lng: number } | null>(() => {
+    try {
+      const cachedLat = localStorage.getItem("student_last_lat");
+      const cachedLng = localStorage.getItem("student_last_lng");
+      return cachedLat && cachedLng ? { lat: parseFloat(cachedLat), lng: parseFloat(cachedLng) } : null;
+    } catch {
+      return null;
+    }
+  });
+  const [studentLocStatus, setStudentLocStatus] = useState<'idle' | 'requesting' | 'granted' | 'denied'>('requesting');
+  const [studentLocAccuracy, setStudentLocAccuracy] = useState<number | null>(null);
+
+  const requestStudentLocation = useCallback((isUserGesture = false) => {
+    if (!("geolocation" in navigator)) {
+      setStudentLocStatus('denied');
+      return;
+    }
+    setStudentLocStatus('requesting');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setStudentCoords({ lat, lng });
+        setStudentLocAccuracy(Math.round(pos.coords.accuracy));
+        setStudentLocStatus('granted');
+        try {
+          localStorage.setItem("student_last_lat", lat.toString());
+          localStorage.setItem("student_last_lng", lng.toString());
+        } catch {}
+      },
+      (err) => {
+        console.warn("Student high-accuracy GPS failed, retrying standard mode:", err);
+        navigator.geolocation.getCurrentPosition(
+          (fallbackPos) => {
+            const lat = fallbackPos.coords.latitude;
+            const lng = fallbackPos.coords.longitude;
+            setStudentCoords({ lat, lng });
+            setStudentLocAccuracy(Math.round(fallbackPos.coords.accuracy));
+            setStudentLocStatus('granted');
+            try {
+              localStorage.setItem("student_last_lat", lat.toString());
+              localStorage.setItem("student_last_lng", lng.toString());
+            } catch {}
+          },
+          (fallbackErr) => {
+            console.warn("Student location permission denied or timed out:", fallbackErr);
+            setStudentLocStatus('denied');
+          },
+          { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }
+        );
+      },
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+    );
+  }, []);
+
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannedRef = useRef(false);
   const startingRef = useRef(false);
@@ -70,12 +126,13 @@ export default function ScanQR() {
     setCameraStarting(false);
   }, []);
 
-  // Stop camera on component unmount
+  // Proactively request student location upon mounting & clean up camera on unmount
   useEffect(() => {
+    requestStudentLocation(false);
     return () => {
       stopScanner();
     };
-  }, [stopScanner]);
+  }, [stopScanner, requestStudentLocation]);
 
   // 🔊 Audio Chime & Mobile Haptic Vibration Feedback on QR Detection
   const playScanSuccessFeedback = () => {
@@ -248,11 +305,16 @@ export default function ScanQR() {
           }
         };
 
-        if ("geolocation" in navigator) {
+        if (studentCoords) {
+          proceedWithVerification(studentCoords.lat, studentCoords.lng);
+        } else if ("geolocation" in navigator) {
           navigator.geolocation.getCurrentPosition(
-            (pos) => proceedWithVerification(pos.coords.latitude, pos.coords.longitude),
+            (pos) => {
+              setStudentCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+              proceedWithVerification(pos.coords.latitude, pos.coords.longitude);
+            },
             () => proceedWithVerification(), // Fallback without blocking student if GPS times out indoors
-            { enableHighAccuracy: false, timeout: 6000, maximumAge: 60000 }
+            { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
           );
         } else {
           proceedWithVerification();
@@ -542,6 +604,72 @@ export default function ScanQR() {
             <p style={{ margin: "0 0 16px 0", color: "#4b5563", fontSize: "14px", lineHeight: "1.4" }}>
               Point your camera at the teacher's live rotating QR code to mark your attendance.
             </p>
+
+            {/* 📍 Proactive Classroom Geolocation Status Card */}
+            <div
+              style={{
+                padding: "10px 14px",
+                background: studentLocStatus === "granted" ? "#f0fdf4" : studentLocStatus === "requesting" ? "#fefce8" : "#fef2f2",
+                border: `1px solid ${studentLocStatus === "granted" ? "#86efac" : studentLocStatus === "requesting" ? "#fde047" : "#fca5a5"}`,
+                borderRadius: "10px",
+                marginBottom: "14px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "10px",
+                flexWrap: "wrap",
+                textAlign: "left"
+              }}
+            >
+              <div style={{ flex: 1, minWidth: "180px" }}>
+                <div style={{ fontWeight: 700, fontSize: "13px", color: studentLocStatus === "granted" ? "#166534" : studentLocStatus === "requesting" ? "#854d0e" : "#991b1b" }}>
+                  {studentLocStatus === "granted"
+                    ? "🟢 Classroom GPS Proximity: Active"
+                    : studentLocStatus === "requesting"
+                    ? "🟡 Requesting Device Location..."
+                    : "🔴 Location Access Required"}
+                </div>
+                <div style={{ fontSize: "11px", color: "#4b5563", marginTop: "2px" }}>
+                  {studentLocStatus === "granted"
+                    ? `Locked at ${studentCoords?.lat.toFixed(4)}° N, ${studentCoords?.lng.toFixed(4)}° E (±${studentLocAccuracy || 10}m accuracy)`
+                    : "Required to confirm you are physically inside the lecture hall."}
+                </div>
+              </div>
+              {studentLocStatus !== "granted" ? (
+                <button
+                  type="button"
+                  onClick={() => requestStudentLocation(true)}
+                  style={{
+                    background: "#2563eb",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "6px",
+                    padding: "6px 12px",
+                    fontSize: "12px",
+                    fontWeight: 650,
+                    cursor: "pointer"
+                  }}
+                >
+                  📍 Allow Location
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => requestStudentLocation(true)}
+                  style={{
+                    background: "#e5e7eb",
+                    color: "#374151",
+                    border: "none",
+                    borderRadius: "6px",
+                    padding: "4px 8px",
+                    fontSize: "11px",
+                    cursor: "pointer"
+                  }}
+                >
+                  🔄 Refresh GPS
+                </button>
+              )}
+            </div>
 
             {/* Prominent High-Visibility Loading Banner */}
             {cameraStarting && (

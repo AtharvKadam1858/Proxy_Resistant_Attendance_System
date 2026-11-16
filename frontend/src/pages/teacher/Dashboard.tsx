@@ -150,6 +150,65 @@ export default function Dashboard() {
   // 📍 Geofencing Radius (Default 350m: accounts for Laptop Wi-Fi vs Smartphone GPS offset)
   const [geofenceRadius, setGeofenceRadius] = useState<number>(350);
 
+  // 📍 Real-Time Classroom Geolocation & Transmitter State
+  const [teacherCoords, setTeacherCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'requesting' | 'granted' | 'denied'>('requesting');
+  const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
+  const [locationErrorMsg, setLocationErrorMsg] = useState("");
+
+  // Proactive Teacher Location Acquisition (Dual-tier GPS + Wi-Fi Positioning)
+  const acquireTeacherLocation = (isManualClick = false) => {
+    if (!navigator.geolocation) {
+      setLocationStatus('denied');
+      setLocationErrorMsg("Geolocation is not supported by your browser.");
+      return;
+    }
+
+    setLocationStatus('requesting');
+    setLocationErrorMsg("");
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setTeacherCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocationAccuracy(Math.round(pos.coords.accuracy));
+        setLocationStatus('granted');
+        setLocationErrorMsg("");
+      },
+      (err) => {
+        console.warn("High-accuracy location error on laptop, retrying Wi-Fi / standard mode:", err);
+        navigator.geolocation.getCurrentPosition(
+          (fallbackPos) => {
+            setTeacherCoords({ lat: fallbackPos.coords.latitude, lng: fallbackPos.coords.longitude });
+            setLocationAccuracy(Math.round(fallbackPos.coords.accuracy));
+            setLocationStatus('granted');
+            setLocationErrorMsg("");
+          },
+          (fallbackErr) => {
+            console.warn("Fallback location error:", fallbackErr);
+            setLocationStatus('denied');
+            if (fallbackErr.code === 1) {
+              setLocationErrorMsg("Location access was blocked. Please click the lock 🔒 icon in the browser address bar to allow location.");
+            } else if (fallbackErr.code === 2) {
+              setLocationErrorMsg("Location unavailable. If using a Windows laptop, enable 'Location Services' in Windows Settings > Privacy.");
+            } else {
+              setLocationErrorMsg("Location request timed out. Please try refreshing.");
+            }
+          },
+          { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }
+        );
+      },
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+    );
+  };
+
+  const useCampusPreset = () => {
+    // Official Rajarambapu Institute of Technology (RIT), Rajaramnagar Coordinates
+    setTeacherCoords({ lat: 16.9798, lng: 74.2882 });
+    setLocationAccuracy(20);
+    setLocationStatus('granted');
+    setLocationErrorMsg("");
+  };
+
   const intervalRef = useRef<any>(null);
   const liveIntervalRef = useRef<any>(null);
 
@@ -180,6 +239,9 @@ export default function Dashboard() {
         });
     }
 
+    // Proactively acquire teacher location upon opening the dashboard
+    acquireTeacherLocation(false);
+
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -191,7 +253,7 @@ export default function Dashboard() {
     };
   }, []);
 
-  const startSession = () => {
+  const startSession = async () => {
     if (
       !selectedDepartment ||
       !selectedYear ||
@@ -205,64 +267,110 @@ export default function Dashboard() {
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
+    let lat = teacherCoords?.lat;
+    let lng = teacherCoords?.lng;
 
+    if (lat === undefined || lng === undefined) {
+      try {
+        setLocationStatus('requesting');
+        const pos: any = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 5000,
+            maximumAge: 60000,
+          });
+        });
+        lat = pos.coords.latitude;
+        lng = pos.coords.longitude;
+        setTeacherCoords({ lat, lng });
+        setLocationAccuracy(Math.round(pos.coords.accuracy));
+        setLocationStatus('granted');
+      } catch {
         try {
-          const teacherId =
-            localStorage.getItem("teacher_id");
-
-          if (!teacherId) {
-            alert(
-              "❌ Teacher ID not found. Please login again."
-            );
+          const fallbackPos: any = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: false,
+              timeout: 6000,
+              maximumAge: 300000,
+            });
+          });
+          lat = fallbackPos.coords.latitude;
+          lng = fallbackPos.coords.longitude;
+          setTeacherCoords({ lat, lng });
+          setLocationAccuracy(Math.round(fallbackPos.coords.accuracy));
+          setLocationStatus('granted');
+        } catch {
+          const usePreset = window.confirm(
+            "📍 Laptop GPS / Wi-Fi Location not detected (Windows location services may be off or blocked in browser).\n\nWould you like to use the official RIT Campus Lecture Hall coordinates (16.9798° N, 74.2882° E) for classroom proximity verification?"
+          );
+          if (usePreset) {
+            lat = 16.9798;
+            lng = 74.2882;
+            setTeacherCoords({ lat, lng });
+            setLocationAccuracy(25);
+            setLocationStatus('granted');
+          } else {
+            alert("❌ Location permission is required so students in your classroom can be verified.");
+            setLocationStatus('denied');
             return;
           }
+        }
+      }
+    }
 
-          let currentSession = "";
-          let currentQrToken = "";
+    try {
+      const teacherId =
+        localStorage.getItem("teacher_id");
 
-          try {
-            const result = await startAttendanceSession({
-              teacher_id: teacherId,
-              department: selectedDepartment,
-              year: selectedYear,
-              subject: selectedSubject,
-              lat,
-              lng,
-              geofence_radius: geofenceRadius,
-            });
-            currentSession = result.session_id;
-            currentQrToken = result.qr_token;
-            if (result.classroom_pin) {
-              setClassroomPin(result.classroom_pin);
-            }
-          } catch (cloudErr) {
-            console.warn("Direct Supabase start session fallback to API:", cloudErr);
-            const response = await fetch(`${API_URL}/attendance/start`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                teacher_id: teacherId,
-                department: selectedDepartment,
-                year: selectedYear,
-                subject: selectedSubject,
-                session_type: sessionType,
-                time_slot: selectedTimeSlot,
-                lat,
-                lng,
-              }),
-            });
-            const result = await response.json();
-            if (!result.success) {
-              alert(result.message || "Failed to start attendance");
-              return;
-            }
-            currentSession = result.session_id;
-            currentQrToken = result.qr_token;
-          }
+      if (!teacherId) {
+        alert(
+          "❌ Teacher ID not found. Please login again."
+        );
+        return;
+      }
+
+      let currentSession = "";
+      let currentQrToken = "";
+
+      try {
+        const result = await startAttendanceSession({
+          teacher_id: teacherId,
+          department: selectedDepartment,
+          year: selectedYear,
+          subject: selectedSubject,
+          lat,
+          lng,
+          geofence_radius: geofenceRadius,
+        });
+        currentSession = result.session_id;
+        currentQrToken = result.qr_token;
+        if (result.classroom_pin) {
+          setClassroomPin(result.classroom_pin);
+        }
+      } catch (cloudErr) {
+        console.warn("Direct Supabase start session fallback to API:", cloudErr);
+        const response = await fetch(`${API_URL}/attendance/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            teacher_id: teacherId,
+            department: selectedDepartment,
+            year: selectedYear,
+            subject: selectedSubject,
+            session_type: sessionType,
+            time_slot: selectedTimeSlot,
+            lat,
+            lng,
+          }),
+        });
+        const result = await response.json();
+        if (!result.success) {
+          alert(result.message || "Failed to start attendance");
+          return;
+        }
+        currentSession = result.session_id;
+        currentQrToken = result.qr_token;
+      }
 
           setSessionId(currentSession);
           setQrToken(currentQrToken);
@@ -340,11 +448,6 @@ export default function Dashboard() {
           console.error(err);
           alert("❌ Failed to start attendance");
         }
-      },
-      () => {
-        alert("❌ Location permission required.");
-      }
-    );
   };
 
   const stopSession = async () => {
@@ -720,6 +823,89 @@ export default function Dashboard() {
                 ? "Bypasses distance verification for remote testing / demos."
                 : `Allows up to ${geofenceRadius}m to bridge laptop Wi-Fi with phone GPS.`}
             </span>
+          </div>
+
+          {/* 📍 Classroom Geolocation Transmitter Card */}
+          <div
+            style={{
+              background: locationStatus === "granted" ? "#f0fdf4" : locationStatus === "requesting" ? "#fefce8" : "#fef2f2",
+              border: `1px solid ${locationStatus === "granted" ? "#86efac" : locationStatus === "requesting" ? "#fde047" : "#fca5a5"}`,
+              borderRadius: "10px",
+              padding: "12px 14px",
+              margin: "12px 0 16px 0",
+              textAlign: "left"
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: "13px", color: locationStatus === "granted" ? "#166534" : locationStatus === "requesting" ? "#854d0e" : "#991b1b" }}>
+                  {locationStatus === "granted"
+                    ? "🟢 Classroom GPS Locked & Transmitting"
+                    : locationStatus === "requesting"
+                    ? "🟡 Requesting Laptop GPS Location..."
+                    : "🔴 Location Permission Required on Laptop"}
+                </div>
+                <div style={{ fontSize: "11px", color: "#4b5563", marginTop: "3px", lineHeight: "1.4" }}>
+                  {locationStatus === "granted"
+                    ? `Coordinates: ${teacherCoords?.lat.toFixed(4)}° N, ${teacherCoords?.lng.toFixed(4)}° E (Accuracy: ±${locationAccuracy || 20}m). Radius: ${geofenceRadius}m.`
+                    : locationErrorMsg || "Allow browser location so students in your room can be validated."}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "6px" }}>
+                {locationStatus !== "granted" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => acquireTeacherLocation(true)}
+                      style={{
+                        background: "#2563eb",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: "6px",
+                        padding: "6px 12px",
+                        fontSize: "12px",
+                        fontWeight: 650,
+                        cursor: "pointer"
+                      }}
+                    >
+                      📍 Allow / Refresh
+                    </button>
+                    <button
+                      type="button"
+                      onClick={useCampusPreset}
+                      style={{
+                        background: "#10b981",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: "6px",
+                        padding: "6px 12px",
+                        fontSize: "12px",
+                        fontWeight: 650,
+                        cursor: "pointer"
+                      }}
+                    >
+                      🏫 Use RIT Coords
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => acquireTeacherLocation(true)}
+                    style={{
+                      background: "#e5e7eb",
+                      color: "#374151",
+                      border: "none",
+                      borderRadius: "6px",
+                      padding: "5px 10px",
+                      fontSize: "11px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    🔄 Refresh GPS
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* START / STOP */}
