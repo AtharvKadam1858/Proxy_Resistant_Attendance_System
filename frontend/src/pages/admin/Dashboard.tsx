@@ -12,7 +12,7 @@ import {
 } from "firebase/app";
 
 import { API_URL } from "../../config";
-import { getStudentsList, addNewStudent } from "../../services/supabase";
+import { getStudentsList, addNewStudent, updateUserPassword } from "../../services/supabase";
 import ritLogo from "../../assets/RIT_logo.jpeg";
 
 const firebaseConfig = {
@@ -85,6 +85,13 @@ export default function AdminDashboard() {
 
   const [photo, setPhoto] =
     useState<File | null>(null);
+
+  // Admin Password Change State
+  const [showAdminPassModal, setShowAdminPassModal] = useState(false);
+  const [adminNewPass, setAdminNewPass] = useState("");
+  const [adminConfirmPass, setAdminConfirmPass] = useState("");
+  const [adminPassMsg, setAdminPassMsg] = useState("");
+  const [adminPassLoading, setAdminPassLoading] = useState(false);
 
   const [loading, setLoading] =
     useState(false);
@@ -500,29 +507,85 @@ export default function AdminDashboard() {
     try {
       await auth.signOut();
     } catch (error) {
-      console.error(
-        "Logout error:",
-        error
-      );
+      console.error("Logout error:", error);
     }
-
     localStorage.clear();
     window.location.href = "/";
   };
 
+  const handleAdminPasswordChange = async () => {
+    const adminId = localStorage.getItem("admin_id") || "admin";
+    if (!adminNewPass || adminNewPass.length < 6) {
+      setAdminPassMsg("❌ Password must be at least 6 characters long.");
+      return;
+    }
+    if (adminNewPass !== adminConfirmPass) {
+      setAdminPassMsg("❌ Passwords do not match.");
+      return;
+    }
+    try {
+      setAdminPassLoading(true);
+      setAdminPassMsg("");
+      await updateUserPassword("admin", adminId, adminNewPass);
+      setAdminPassMsg("✅ Admin password updated successfully!");
+      setAdminNewPass("");
+      setAdminConfirmPass("");
+      setTimeout(() => setShowAdminPassModal(false), 1500);
+    } catch (e: any) {
+      setAdminPassMsg("❌ " + (e?.message || "Failed to update password."));
+    } finally {
+      setAdminPassLoading(false);
+    }
+  };
+
   return (
     <div className="admin-page">
-      <header className="admin-header">
-        <div className="admin-header-content">
+      <header className="admin-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", padding: "12px 20px" }}>
+        <div className="admin-header-content" style={{ display: "flex", alignItems: "center", gap: "14px" }}>
           <img
             src={ritLogo}
             alt="RIT Logo"
             className="admin-rit-logo"
           />
 
-          <h1>
+          <h1 style={{ margin: 0, fontSize: "20px" }}>
             Proxy-Resistant Smart Attendance System
           </h1>
+        </div>
+
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <button
+            type="button"
+            onClick={() => setShowAdminPassModal(true)}
+            style={{
+              background: "#ffffff",
+              color: "#111827",
+              border: "1px solid #d1d5db",
+              borderRadius: "6px",
+              padding: "7px 12px",
+              fontSize: "12px",
+              fontWeight: "700",
+              cursor: "pointer",
+            }}
+          >
+            🔒 Password
+          </button>
+          <button
+            type="button"
+            onClick={logout}
+            style={{
+              background: "#ef4444",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "7px 12px",
+              fontSize: "12px",
+              fontWeight: "700",
+              cursor: "pointer",
+            }}
+          >
+            Logout
+          </button>
         </div>
       </header>
 
@@ -1224,6 +1287,127 @@ export default function AdminDashboard() {
           </button>
         </section>
       </main>
+
+      {/* Admin Password Change Modal */}
+      {showAdminPassModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "16px",
+            boxSizing: "border-box",
+          }}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "12px",
+              maxWidth: "420px",
+              width: "100%",
+              padding: "24px",
+              boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
+              boxSizing: "border-box",
+            }}
+          >
+            <h3 style={{ margin: "0 0 14px 0", color: "#111827", fontSize: "17px" }}>
+              🔒 Change Administrator Password
+            </h3>
+            <p style={{ margin: "0 0 14px 0", fontSize: "13px", color: "#6b7280" }}>
+              Update the master administrator credentials for institution management.
+            </p>
+
+            <div style={{ marginBottom: "12px" }}>
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650", display: "block", marginBottom: "4px" }}>
+                New Password
+              </label>
+              <input
+                type="password"
+                placeholder="Min 6 characters"
+                value={adminNewPass}
+                onChange={(e) => setAdminNewPass(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  boxSizing: "border-box",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: "12px" }}>
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650", display: "block", marginBottom: "4px" }}>
+                Confirm New Password
+              </label>
+              <input
+                type="password"
+                placeholder="Re-enter password"
+                value={adminConfirmPass}
+                onChange={(e) => setAdminConfirmPass(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  boxSizing: "border-box",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+
+            {adminPassMsg && (
+              <p style={{ margin: "8px 0", fontSize: "13px", fontWeight: "650" }}>
+                {adminPassMsg}
+              </p>
+            )}
+
+            <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+              <button
+                type="button"
+                onClick={handleAdminPasswordChange}
+                disabled={adminPassLoading}
+                style={{
+                  flex: 1,
+                  background: "#ffca08",
+                  color: "#111",
+                  border: "none",
+                  borderRadius: "7px",
+                  padding: "10px",
+                  fontWeight: "750",
+                  cursor: "pointer",
+                }}
+              >
+                {adminPassLoading ? "Updating..." : "Update Password"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAdminPassModal(false)}
+                style={{
+                  flex: 1,
+                  background: "#f3f4f6",
+                  color: "#374151",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "7px",
+                  padding: "10px",
+                  fontWeight: "700",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

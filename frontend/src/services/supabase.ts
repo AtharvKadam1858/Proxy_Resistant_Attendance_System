@@ -42,7 +42,7 @@ export async function supabaseQuery(endpoint: string, options: RequestInit = {})
 // 1. AUTHENTICATION & PROFILE
 // ---------------------------------------------------------------------
 
-export async function loginUserWithSupabase(email: string, role: string) {
+export async function loginUserWithSupabase(email: string, role: string, password?: string) {
   const cleanEmail = email.trim().toLowerCase();
 
   if (role === "student") {
@@ -52,11 +52,15 @@ export async function loginUserWithSupabase(email: string, role: string) {
     if (!data || data.length === 0) {
       throw new Error("Student account not found in database.");
     }
+    const student = data[0];
+    if (password && student.password_hash && student.password_hash !== password) {
+      throw new Error("Incorrect password. Please verify your credentials.");
+    }
     return {
       success: true,
       role: "student",
-      prn: data[0].prn,
-      student: data[0],
+      prn: student.prn,
+      student: student,
     };
   }
 
@@ -67,11 +71,15 @@ export async function loginUserWithSupabase(email: string, role: string) {
     if (!data || data.length === 0) {
       throw new Error("Teacher account not found in database.");
     }
+    const teacher = data[0];
+    if (password && teacher.password_hash && teacher.password_hash !== password) {
+      throw new Error("Incorrect password. Please verify your credentials.");
+    }
     return {
       success: true,
       role: "teacher",
-      teacher_id: data[0].teacher_id,
-      teacher: data[0],
+      teacher_id: teacher.teacher_id,
+      teacher: teacher,
     };
   }
 
@@ -82,15 +90,79 @@ export async function loginUserWithSupabase(email: string, role: string) {
     if (!data || data.length === 0) {
       throw new Error("Admin account not found in database.");
     }
+    const admin = data[0];
+    if (password && admin.password_hash && admin.password_hash !== password) {
+      throw new Error("Incorrect password. Please verify your credentials.");
+    }
     return {
       success: true,
       role: "admin",
-      admin_id: data[0].admin_id,
-      admin: data[0],
+      admin_id: admin.admin_id,
+      admin: admin,
     };
   }
 
   throw new Error("Invalid role selected.");
+}
+
+export async function updateUserPassword(role: string, identifier: string, newPassword: string) {
+  const cleanId = identifier.trim();
+  const cleanPass = newPassword.trim();
+  if (!cleanPass || cleanPass.length < 6) {
+    throw new Error("Password must be at least 6 characters long.");
+  }
+
+  if (role === "student") {
+    await supabaseQuery(
+      `students?or=(prn.eq.${encodeURIComponent(cleanId)},email.ilike.${encodeURIComponent(cleanId)})`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ password_hash: cleanPass }),
+      }
+    );
+    return { success: true, message: "Student password updated successfully!" };
+  }
+
+  if (role === "teacher") {
+    await supabaseQuery(
+      `teachers?or=(teacher_id.eq.${encodeURIComponent(cleanId)},email.ilike.${encodeURIComponent(cleanId)})`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ password_hash: cleanPass }),
+      }
+    );
+    return { success: true, message: "Teacher password updated successfully!" };
+  }
+
+  if (role === "admin") {
+    await supabaseQuery(
+      `admins?or=(admin_id.eq.${encodeURIComponent(cleanId)},email.ilike.${encodeURIComponent(cleanId)})`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ password_hash: cleanPass }),
+      }
+    );
+    return { success: true, message: "Admin password updated successfully!" };
+  }
+
+  throw new Error("Invalid user role.");
+}
+
+export async function updateStudentEducation(prn: string, educationData: any, headline?: string) {
+  const cleanPrn = prn.trim();
+  const payload: any = {
+    education_details: educationData,
+  };
+  if (headline !== undefined) {
+    payload.resume_headline = headline;
+  }
+
+  await supabaseQuery(`students?prn=eq.${encodeURIComponent(cleanPrn)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
+  return { success: true, message: "Educational portfolio updated successfully!" };
 }
 
 export async function getStudentProfile(prnOrEmail: string) {

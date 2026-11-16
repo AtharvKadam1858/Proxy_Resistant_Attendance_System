@@ -61,7 +61,7 @@ export default function Login() {
 
       // 1. Direct Cloud Database (Supabase) authentication (Instant 50ms response)
       try {
-        data = await loginUserWithSupabase(email, role);
+        data = await loginUserWithSupabase(email, role, password);
       } catch (dbErr: any) {
         console.warn("Checking legacy credentials fallback...", dbErr);
       }

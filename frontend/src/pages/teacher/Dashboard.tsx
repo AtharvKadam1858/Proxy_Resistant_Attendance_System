@@ -9,6 +9,7 @@ import {
   refreshAttendanceSession,
   stopAttendanceSession,
   getLiveAttendance,
+  updateUserPassword,
 } from "../../services/supabase";
 
 const departmentSubjects: {
@@ -88,6 +89,13 @@ const labTimeSlots = [
 
 export default function Dashboard() {
   const [teacher, setTeacher] = useState<any>(null);
+
+  // Teacher Password & Auth State
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [teacherNewPass, setTeacherNewPass] = useState("");
+  const [teacherConfirmPass, setTeacherConfirmPass] = useState("");
+  const [teacherPassMsg, setTeacherPassMsg] = useState("");
+  const [teacherPassLoading, setTeacherPassLoading] = useState(false);
 
   const [attendanceActive, setAttendanceActive] =
     useState(false);
@@ -370,18 +378,96 @@ export default function Dashboard() {
     }
   };
 
+  const handleLogout = () => {
+    localStorage.clear();
+    window.location.href = "/";
+  };
+
+  const handleTeacherPasswordChange = async () => {
+    const teacherId = localStorage.getItem("teacher_id") || teacher?.teacher_id;
+    if (!teacherId) return;
+    if (!teacherNewPass || teacherNewPass.length < 6) {
+      setTeacherPassMsg("❌ Password must be at least 6 characters long.");
+      return;
+    }
+    if (teacherNewPass !== teacherConfirmPass) {
+      setTeacherPassMsg("❌ Passwords do not match.");
+      return;
+    }
+    try {
+      setTeacherPassLoading(true);
+      setTeacherPassMsg("");
+      await updateUserPassword("teacher", teacherId, teacherNewPass);
+      setTeacherPassMsg("✅ Password updated successfully!");
+      setTeacherNewPass("");
+      setTeacherConfirmPass("");
+      setTimeout(() => setShowPasswordModal(false), 1500);
+    } catch (e: any) {
+      setTeacherPassMsg("❌ " + (e?.message || "Failed to update password."));
+    } finally {
+      setTeacherPassLoading(false);
+    }
+  };
+
   return (
     <>
-      <header className="dashboard-header">
-        <img
-          src={RITLogo}
-          alt="RIT Logo"
-          className="dashboard-rit-logo"
-        />
+      <header
+        className="dashboard-header"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "10px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+          <img src={RITLogo} alt="RIT Logo" className="dashboard-rit-logo" />
+          <h1 style={{ margin: 0, fontSize: "20px" }}>
+            Proxy-Resistant Smart Attendance System
+          </h1>
+        </div>
 
-        <h1>
-          Proxy-Resistant Smart Attendance System
-        </h1>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <button
+            type="button"
+            onClick={() => setShowPasswordModal(true)}
+            style={{
+              background: "#ffffff",
+              color: "#111827",
+              border: "1px solid #d1d5db",
+              borderRadius: "6px",
+              padding: "7px 12px",
+              fontSize: "12px",
+              fontWeight: "700",
+              cursor: "pointer",
+              width: "auto",
+              minHeight: "auto",
+              margin: 0,
+            }}
+          >
+            🔒 Change Password
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            style={{
+              background: "#ef4444",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "7px 12px",
+              fontSize: "12px",
+              fontWeight: "700",
+              cursor: "pointer",
+              width: "auto",
+              minHeight: "auto",
+              margin: 0,
+            }}
+          >
+            Logout
+          </button>
+        </div>
       </header>
 
       <div className="container">
@@ -783,6 +869,127 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Password Change Modal for Faculty */}
+      {showPasswordModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "16px",
+            boxSizing: "border-box",
+          }}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "12px",
+              maxWidth: "420px",
+              width: "100%",
+              padding: "24px",
+              boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
+              boxSizing: "border-box",
+            }}
+          >
+            <h3 style={{ margin: "0 0 14px 0", color: "#111827", fontSize: "17px" }}>
+              🔒 Change Faculty Password
+            </h3>
+            <p style={{ margin: "0 0 14px 0", fontSize: "13px", color: "#6b7280" }}>
+              Update your account password for secure access to the faculty portal.
+            </p>
+
+            <div style={{ marginBottom: "12px" }}>
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650", display: "block", marginBottom: "4px" }}>
+                New Password
+              </label>
+              <input
+                type="password"
+                placeholder="Min 6 characters"
+                value={teacherNewPass}
+                onChange={(e) => setTeacherNewPass(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  boxSizing: "border-box",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: "12px" }}>
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650", display: "block", marginBottom: "4px" }}>
+                Confirm New Password
+              </label>
+              <input
+                type="password"
+                placeholder="Re-enter password"
+                value={teacherConfirmPass}
+                onChange={(e) => setTeacherConfirmPass(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  boxSizing: "border-box",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+
+            {teacherPassMsg && (
+              <p style={{ margin: "8px 0", fontSize: "13px", fontWeight: "650" }}>
+                {teacherPassMsg}
+              </p>
+            )}
+
+            <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+              <button
+                type="button"
+                onClick={handleTeacherPasswordChange}
+                disabled={teacherPassLoading}
+                style={{
+                  flex: 1,
+                  background: "#ffca08",
+                  color: "#111",
+                  border: "none",
+                  borderRadius: "7px",
+                  padding: "10px",
+                  fontWeight: "750",
+                  cursor: "pointer",
+                }}
+              >
+                {teacherPassLoading ? "Updating..." : "Update Password"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPasswordModal(false)}
+                style={{
+                  flex: 1,
+                  background: "#f3f4f6",
+                  color: "#374151",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "7px",
+                  padding: "10px",
+                  fontWeight: "700",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
