@@ -356,6 +356,58 @@ sections = [
         "text": "Students can view their past attendance slips at any time in their profile under '📬 Official Attendance Email Receipts', with 1-click preview and official slip print options."
     },
 
+    {
+        "type": "heading2",
+        "text": "4.9 Strict Deep-Learning Biometric AI Face Recognition & 100% Anti-Proxy Engine"
+    },
+    {
+        "type": "paragraph",
+        "text": "To guarantee 100% proxy resistance and prevent buddy-punching, photo-of-photo spoofing, empty wall/ceiling pointing, or unauthorized attendance marking, the system deploys a client-side neural face recognition engine powered by @vladmandic/face-api running deep ResNet-34 neural networks inside the browser:"
+    },
+    {
+        "type": "bullet",
+        "bold": "Real-Time Face Presence Tracking",
+        "text": "The camera feed is actively sampled every 600ms. If the camera is pointed at a wall, table, ceiling, or empty space, the UI immediately displays '🔴 No Face Detected (Point Camera at Face)' and the attendance capture button is strictly disabled ('🚫 Please Face the Camera'). No automatic timer can capture an empty frame."
+    },
+    {
+        "type": "bullet",
+        "bold": "68-Point Facial Landmark Detection",
+        "text": "The TinyFaceDetector and FaceLandmark68Net neural models verify the anatomical integrity of the subject's face (left eye, right eye, nose bridge, mouth contour, jawline), ensuring flat non-face textures are rejected immediately."
+    },
+    {
+        "type": "bullet",
+        "bold": "128-Dimensional Deep Facial Embedding & Euclidean Distance",
+        "text": "The FaceRecognitionNet computes a 128-dimensional deep metric embedding vector representing the student's unique facial geometry. This live descriptor is mathematically compared against the 128-d descriptor extracted from the student's registered college profile photo stored in Supabase Cloud. The Euclidean distance must satisfy a strict threshold of <= 0.52. If another student attempts to mark attendance, the system blocks them with an explicit alert: '❌ Biometric Face Mismatch! The face detected does NOT match registered student Atharv Kadam (distance exceeds allowed threshold 0.52). Proxy attendance is strictly prohibited.'"
+    },
+    {
+        "type": "bullet",
+        "bold": "Instant Biometric Diagnostic Test Tool",
+        "text": "Students can verify their biometric camera registration at any time by navigating to '/scan' and clicking '🧪 Test Biometric AI Face Matcher (Front Camera)', allowing self-testing without needing an active lecture session."
+    },
+    {
+        "type": "heading2",
+        "text": "4.10 Admin Portal 2-Tab Batch Directory & Live Student CRUD Editor"
+    },
+    {
+        "type": "paragraph",
+        "text": "The Administrative Control Portal provides college administrators with deep visibility and management controls:"
+    },
+    {
+        "type": "bullet",
+        "bold": "Tab 1: Student Directory & Class Batch Records",
+        "text": "Instant filtering by Year/Class (First Year, Second Year, Third Year, Final Year), Department (AIML, CSE, etc.), Division (A, B, C, D), and live keyword search. Displays student photo, full name, PRN, branch, division, mobile, and parent mobile in real time."
+    },
+    {
+        "type": "bullet",
+        "bold": "Tab 2: Enroll & Add Students (Manual & Bulk Upload)",
+        "text": "Supports single-student registration with profile photo upload or bulk batch onboarding via Excel/CSV spreadsheets and ZIP archives."
+    },
+    {
+        "type": "bullet",
+        "bold": "Comprehensive Student Editor & Profile Modal",
+        "text": "Clicking any student record in the directory opens the Student Profile Modal, displaying their photo, PRN, email, blood group, address, and contact numbers. Administrators can edit any field and save changes directly to Supabase Cloud with 1-click confirmation."
+    },
+
     # -------------------------------------------------------------
     # SECTION 5: CLOUD ARCHITECTURE & PERFORMANCE
     # -------------------------------------------------------------
