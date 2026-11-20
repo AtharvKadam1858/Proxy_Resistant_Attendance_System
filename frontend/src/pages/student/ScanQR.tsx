@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import SelfieCapture from "../../components/SelfieCapture";
 import { API_URL } from "../../config";
 import { verifySessionQR } from "../../services/supabase";
-import { dispatchAttendanceEmailNotification } from "../../services/emailService";
 import RITLogo from "../../assets/RIT_logo.jpeg";
 
 export default function ScanQR() {

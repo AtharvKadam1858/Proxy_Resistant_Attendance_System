@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { API_URL } from "../../src/config";
 import { markAttendanceForStudent, getStudentProfile } from "../services/supabase";
 import {
   loadFaceApiModels,
-  detectFaceInFrame,
   verifyLiveFaceAgainstRegistered,
   analyzeLiveFrameLiveness,
   getCachedDescriptor,
   preWarmStudentBiometrics,
-  LiveFrameAnalysis,
+  type LiveFrameAnalysis,
 } from "../services/aiFaceRecognition";
 
 type Props = {
