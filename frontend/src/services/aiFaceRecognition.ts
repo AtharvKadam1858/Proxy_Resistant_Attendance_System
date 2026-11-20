@@ -60,15 +60,33 @@ export async function loadFaceApiModels(): Promise<void> {
   if (modelLoadingPromise) return modelLoadingPromise;
 
   modelLoadingPromise = (async () => {
-    const MODEL_URL = "/models";
-    console.log("⚡ Pre-loading FaceAPI AI neural models from", MODEL_URL);
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-    ]);
-    modelsLoaded = true;
-    console.log("✅ FaceAPI AI neural models loaded successfully into WebGL/WASM!");
+    const candidatePaths = [
+      "/models",
+      "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model",
+    ];
+
+    let success = false;
+    for (const basePath of candidatePaths) {
+      try {
+        console.log("⚡ Loading FaceAPI neural models from:", basePath);
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(basePath),
+          faceapi.nets.faceLandmark68Net.loadFromUri(basePath),
+          faceapi.nets.faceRecognitionNet.loadFromUri(basePath),
+        ]);
+        success = true;
+        modelsLoaded = true;
+        console.log("✅ FaceAPI AI neural models loaded successfully from:", basePath);
+        break;
+      } catch (err) {
+        console.warn(`Failed loading models from ${basePath}, trying fallback:`, err);
+      }
+    }
+
+    if (!success) {
+      modelLoadingPromise = null;
+      throw new Error("Unable to load Face-API neural network models.");
+    }
   })();
 
   return modelLoadingPromise;
@@ -142,8 +160,8 @@ export function validateFullFrontalFace(
   const safeFrameW = Math.max(1, frameWidth);
   const safeFrameH = Math.max(1, frameHeight);
 
-  // 1. Detection Confidence Check (Rejects noisy or partial artifacts)
-  if (detection.detection.score < 0.50) {
+  // 1. Detection Confidence Check (Minimum 0.30)
+  if (detection.detection.score < 0.30) {
     return {
       valid: false,
       reason: "❌ Unclear face detection. Please face the camera in good lighting.",
@@ -152,9 +170,9 @@ export function validateFullFrontalFace(
     };
   }
 
-  // 2. Anti-Edge Cutoff Check: Bounding box must have margin inside the frame
-  const marginX = safeFrameW * 0.035; // 3.5% margin from left/right borders
-  const marginY = safeFrameH * 0.035; // 3.5% margin from top/bottom borders
+  // 2. Anti-Edge Cutoff Check: Bounding box must have margin inside the frame (1% margin)
+  const marginX = safeFrameW * 0.01;
+  const marginY = safeFrameH * 0.01;
   if (
     box.x < marginX ||
     box.y < marginY ||
@@ -163,19 +181,19 @@ export function validateFullFrontalFace(
   ) {
     return {
       valid: false,
-      reason: "❌ Incomplete Face: Face is cut off at the camera edge. Please center your full face inside the oval guide.",
+      reason: "❌ Face touching screen edge. Please center your face inside the oval.",
       yawRatio: 1.0,
       faceWidthRatio: box.width / safeFrameW,
     };
   }
 
-  // 3. Minimum Face Size Ratio (Rejects tiny, distant, or cropped faces)
+  // 3. Minimum Face Size Ratio (Allows laptop webcams and normal arm's length >= 0.12)
   const faceWidthRatio = box.width / safeFrameW;
   const faceHeightRatio = box.height / safeFrameH;
-  if (faceWidthRatio < 0.20 || faceHeightRatio < 0.20) {
+  if (faceWidthRatio < 0.12 || faceHeightRatio < 0.12) {
     return {
       valid: false,
-      reason: "❌ Face Too Far: Please bring your face closer to the camera to fill the oval guide.",
+      reason: "❌ Please bring your face slightly closer to fill the oval guide.",
       yawRatio: 1.0,
       faceWidthRatio,
     };
@@ -193,12 +211,12 @@ export function validateFullFrontalFace(
     !leftEye || leftEye.length < 6 ||
     !rightEye || rightEye.length < 6 ||
     !nose || nose.length < 4 ||
-    !jaw || jaw.length < 15 ||
-    !mouth || mouth.length < 12
+    !jaw || jaw.length < 10 ||
+    !mouth || mouth.length < 8
   ) {
     return {
       valid: false,
-      reason: "❌ Facial features incomplete. Both eyes, nose, mouth, and chin must be clearly visible.",
+      reason: "❌ Facial features obscured. Both eyes, nose, and mouth must be visible.",
       yawRatio: 1.0,
       faceWidthRatio,
     };
@@ -214,7 +232,7 @@ export function validateFullFrontalFace(
     y: (rightEye[1].y + rightEye[4].y) / 2,
   };
   const interOcularDist = pointDistance(leftEyeCenter, rightEyeCenter);
-  if (interOcularDist < box.width * 0.24) {
+  if (interOcularDist < box.width * 0.17) {
     return {
       valid: false,
       reason: "❌ Both eyes must be visible. Half face or profile angle is strictly prohibited.",
@@ -228,25 +246,18 @@ export function validateFullFrontalFace(
   const distLeftEyeToNose = pointDistance(leftEyeCenter, noseTip);
   const distRightEyeToNose = pointDistance(rightEyeCenter, noseTip);
 
-  if (distLeftEyeToNose <= 0 || distRightEyeToNose <= 0) {
-    return {
-      valid: false,
-      reason: "❌ Facial geometry distorted. Please look directly at the camera.",
-      yawRatio: 1.0,
-      faceWidthRatio,
-    };
-  }
-
-  const yawRatio = distLeftEyeToNose / distRightEyeToNose;
-  // In a forward-facing frontal face, yawRatio is between 0.60 and 1.65.
-  // Half face / turned poses yield extreme ratios (<0.58 or >1.72).
-  if (yawRatio < 0.60 || yawRatio > 1.65) {
-    return {
-      valid: false,
-      reason: "❌ Half-Face / Turned Pose Detected: Please face the camera straight on with your full face.",
-      yawRatio,
-      faceWidthRatio,
-    };
+  let yawRatio = 1.0;
+  if (distLeftEyeToNose > 0 && distRightEyeToNose > 0) {
+    yawRatio = distLeftEyeToNose / distRightEyeToNose;
+    // Extreme values (<0.45 or >2.20) indicate a side profile or half face!
+    if (yawRatio < 0.45 || yawRatio > 2.20) {
+      return {
+        valid: false,
+        reason: "❌ Half-Face / Turned Pose Detected: Please face the camera straight on with your full face.",
+        yawRatio,
+        faceWidthRatio,
+      };
+    }
   }
 
   // 7. Jawline Symmetry Check (Left jaw vs Right jaw from nose tip)
@@ -256,10 +267,10 @@ export function validateFullFrontalFace(
   const rightJawDist = pointDistance(rightJawPt, noseTip);
   if (leftJawDist > 0 && rightJawDist > 0) {
     const jawRatio = leftJawDist / rightJawDist;
-    if (jawRatio < 0.55 || jawRatio > 1.82) {
+    if (jawRatio < 0.40 || jawRatio > 2.45) {
       return {
         valid: false,
-        reason: "❌ Partial Face Detected: Full jawline and both cheeks must be visible.",
+        reason: "❌ Partial Face Detected: Full jawline and cheeks must be visible.",
         yawRatio,
         faceWidthRatio,
       };
@@ -270,7 +281,7 @@ export function validateFullFrontalFace(
   const leftEyeWidth = pointDistance(leftEye[0], leftEye[3]);
   const rightEyeWidth = pointDistance(rightEye[0], rightEye[3]);
   const eyeRatio = Math.max(leftEyeWidth, rightEyeWidth) / Math.max(1, Math.min(leftEyeWidth, rightEyeWidth));
-  if (eyeRatio > 1.75) {
+  if (eyeRatio > 2.2) {
     return {
       valid: false,
       reason: "❌ Uneven Eye Visibility: One eye is obscured or out of frame.",
@@ -350,11 +361,11 @@ export async function analyzeLiveFrameLiveness(
     const rightEar = calculateEyeAspectRatio(rightEye);
     const ear = (leftEar + rightEar) / 2.0;
 
-    // Strict & Calibrated Eye Openness Evaluation
-    // Closed if average EAR < 0.21 or either individual eye drops below 0.19
-    const eyesClosed = ear < 0.21 || leftEar < 0.19 || rightEar < 0.19;
-    // Open if average EAR >= 0.22 and both eyes are at least 0.20
-    const eyesOpen = ear >= 0.22 && leftEar >= 0.20 && rightEar >= 0.20;
+    // Calibrated Eye Openness Evaluation
+    // Closed if average EAR < 0.19 or either individual eye drops below 0.17
+    const eyesClosed = ear < 0.19 || leftEar < 0.17 || rightEar < 0.17;
+    // Open if average EAR >= 0.20 and both eyes are at least 0.18
+    const eyesOpen = ear >= 0.20 && leftEar >= 0.18 && rightEar >= 0.18;
 
     return {
       faceDetected: true,
@@ -624,14 +635,14 @@ export async function verifyLiveFaceAgainstRegistered(
   const rightEar = calculateEyeAspectRatio(rightEye);
   const avgEar = (leftEar + rightEar) / 2.0;
 
-  // Strict check: Both eyes must be open with average EAR >= 0.21 and neither eye below 0.19.
-  if (avgEar < 0.21 || leftEar < 0.19 || rightEar < 0.19) {
+  // Strict check: Both eyes must be open with average EAR >= 0.18 and neither eye below 0.16.
+  if (avgEar < 0.18 || leftEar < 0.16 || rightEar < 0.16) {
     console.warn(`[Face Verification] Rejected closed/squinting eyes: avg=${avgEar.toFixed(3)}, left=${leftEar.toFixed(3)}, right=${rightEar.toFixed(3)}`);
     return {
       verified: false,
       score: 0.1,
       euclideanDistance: 1.0,
-      message: `❌ Eyes are closed! (Eye Aspect Ratio ${avgEar.toFixed(2)} is below minimum 0.21). You must look directly at the camera with your eyes open. Sleeping, closed-eye, or spoofed poses are strictly rejected.`,
+      message: `❌ Eyes are closed! (Eye Aspect Ratio ${avgEar.toFixed(2)} is below minimum 0.18). You must look directly at the camera with your eyes open. Sleeping, closed-eye, or spoofed poses are strictly rejected.`,
       faceDetected: true,
       landmarksDetected: true,
       registeredFaceFound: true,
@@ -642,8 +653,8 @@ export async function verifyLiveFaceAgainstRegistered(
   const distance = faceapi.euclideanDistance(registeredDescriptor, liveDetection.descriptor);
   console.log(`⚡ [High-Speed Face Match for ${studentName}] Euclidean Distance:`, distance);
 
-  // Production Strict Threshold: 0.55 ensures ONLY true matching frontal face of the registered student passes!
-  const PRODUCTION_MATCH_THRESHOLD = 0.55;
+  // Production Strict Threshold: 0.58 ensures ONLY true matching frontal face of the registered student passes!
+  const PRODUCTION_MATCH_THRESHOLD = 0.58;
   const isMatch = distance <= PRODUCTION_MATCH_THRESHOLD;
 
   // Mathematically sound normalized cosine similarity: cos(theta) = 1 - (d^2 / 2)

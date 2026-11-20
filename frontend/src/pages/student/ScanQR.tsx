@@ -173,7 +173,17 @@ export default function ScanQR() {
         playScanSuccessFeedback();
 
         const currentQrToken = decodedText.trim();
-        setQrToken(currentQrToken);
+        let tokenToVerify = currentQrToken;
+        let embeddedPin = "";
+        try {
+          if (currentQrToken.startsWith("{")) {
+            const parsed = JSON.parse(currentQrToken);
+            if (parsed.token) tokenToVerify = parsed.token;
+            if (parsed.pin) embeddedPin = parsed.pin;
+          }
+        } catch {}
+
+        setQrToken(tokenToVerify);
         await stopScanner();
 
         setVerifying(true);
@@ -196,7 +206,7 @@ export default function ScanQR() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  qr_token: currentQrToken,
+                  qr_token: tokenToVerify,
                   prn: studentPrn,
                   lat: lat ?? null,
                   lng: lng ?? null,
@@ -210,16 +220,15 @@ export default function ScanQR() {
               }
             } catch {}
 
-            // 2. Direct Cloud Database (Supabase) Instant Geofencing & Classroom PIN Verification
+            // 2. Direct Cloud Database (Supabase) Instant Geofencing Verification
             if (!verifiedSessionId) {
-              let enteredPin = "";
-              let cloudVerify = await verifySessionQR(currentQrToken, lat, lng);
+              let cloudVerify = await verifySessionQR(tokenToVerify, lat, lng, embeddedPin);
 
-              // If session enforces classroom PIN (to prevent cross-floor cheating), prompt for PIN
-              if (!cloudVerify.success && cloudVerify.require_pin) {
-                enteredPin = prompt(cloudVerify.message) || "";
+              // If session enforces classroom PIN (fallback only if not in QR)
+              if (!cloudVerify.success && cloudVerify.require_pin && !embeddedPin) {
+                const enteredPin = prompt(cloudVerify.message) || "";
                 if (enteredPin) {
-                  cloudVerify = await verifySessionQR(currentQrToken, lat, lng, enteredPin);
+                  cloudVerify = await verifySessionQR(tokenToVerify, lat, lng, enteredPin);
                 }
               }
 
