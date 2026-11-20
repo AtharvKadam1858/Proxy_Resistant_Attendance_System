@@ -5,7 +5,6 @@ import { API_URL } from "../../config";
 import {
   getStudentProfile,
   updateStudentProfilePhoto,
-  updateStudentEducation,
   updateUserPassword,
   applyStudentLeave,
   getStudentAttendanceHistory,
@@ -47,17 +46,6 @@ export default function Profile() {
   // 📬 Official Email Receipts & Notification State
   const [notificationReceipts, setNotificationReceipts] = useState<AttendanceNotificationRecord[]>([]);
   const [selectedReceipt, setSelectedReceipt] = useState<AttendanceNotificationRecord | null>(null);
-
-  // 🎓 Educational Record & Resume State
-  const [cgpa, setCgpa] = useState("");
-  const [tenthPercent, setTenthPercent] = useState("");
-  const [twelfthPercent, setTwelfthPercent] = useState("");
-  const [skills, setSkills] = useState("");
-  const [projects, setProjects] = useState("");
-  const [careerObjective, setCareerObjective] = useState("");
-  const [savingEducation, setSavingEducation] = useState(false);
-  const [eduMsg, setEduMsg] = useState("");
-  const [showResumeModal, setShowResumeModal] = useState(false);
 
   // 🔒 Security & Password Change State
   const [newPassword, setNewPassword] = useState("");
@@ -104,19 +92,6 @@ export default function Profile() {
         }
 
         setStudent(studentData);
-
-        // Pre-fill educational details
-        if (studentData.education_details) {
-          const edu = studentData.education_details;
-          setCgpa(edu.cgpa || "");
-          setTenthPercent(edu.tenth || "");
-          setTwelfthPercent(edu.twelfth || "");
-          setSkills(edu.skills || "");
-          setProjects(edu.projects || "");
-        }
-        if (studentData.resume_headline) {
-          setCareerObjective(studentData.resume_headline);
-        }
 
         // Fetch Attendance Summary for University Exam Eligibility
         try {
@@ -224,30 +199,6 @@ export default function Profile() {
       alert("Failed to upload photo: " + (err.message || "Unknown error"));
     } finally {
       setUploading(false);
-    }
-  };
-
-  const handleSaveEducation = async () => {
-    if (!student) return;
-    try {
-      setSavingEducation(true);
-      setEduMsg("");
-      await updateStudentEducation(
-        student.prn,
-        {
-          cgpa: cgpa.trim(),
-          tenth: tenthPercent.trim(),
-          twelfth: twelfthPercent.trim(),
-          skills: skills.trim(),
-          projects: projects.trim(),
-        },
-        careerObjective.trim()
-      );
-      setEduMsg("✅ Educational portfolio saved to cloud database!");
-    } catch (e: any) {
-      setEduMsg("❌ Failed to save: " + (e?.message || "Unknown error"));
-    } finally {
-      setSavingEducation(false);
     }
   };
 
@@ -582,47 +533,35 @@ export default function Profile() {
           </div>
         )}
 
-        {/* Quick Actions (Scan QR & Attendance) */}
+        {/* Quick Action: View My Attendance Records (Scan QR is exclusively on Tab 2 above) */}
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: "12px",
             margin: "16px 20px 0 20px",
           }}
         >
           <button
-            className="btn"
-            onClick={() => navigate("/scan")}
-            style={{
-              minHeight: "46px",
-              fontSize: "14px",
-              fontWeight: "750",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "8px",
-            }}
-          >
-            📷 Scan Lecture QR
-          </button>
-          <button
+            type="button"
             className="btn"
             onClick={() => navigate("/student-attendance")}
             style={{
+              width: "100%",
               minHeight: "46px",
-              background: "#f3f4f6",
-              border: "1px solid #d1d5db",
-              color: "#1f2937",
+              background: "#f8fafc",
+              border: "1.5px solid #cbd5e1",
+              color: "#0f172a",
               fontSize: "14px",
-              fontWeight: "750",
+              fontWeight: "800",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               gap: "8px",
+              borderRadius: "10px",
+              cursor: "pointer",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
+              transition: "all 0.2s ease",
             }}
           >
-            📊 View My Attendance
+            📊 View My Attendance & Subject-Wise Records
           </button>
         </div>
 
@@ -677,175 +616,7 @@ export default function Profile() {
           )}
         </div>
 
-        {/* Section 2: Student Educational Portfolio & Resume Details */}
-        <div className="section">
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "12px",
-            }}
-          >
-            <h4 style={{ margin: 0, color: "#111827", fontSize: "15px" }}>
-              🎓 Educational Details & Career Profile
-            </h4>
-            <button
-              type="button"
-              onClick={() => setShowResumeModal(true)}
-              style={{
-                background: "#0284c7",
-                color: "#ffffff",
-                border: "none",
-                borderRadius: "6px",
-                padding: "6px 12px",
-                fontSize: "12px",
-                fontWeight: "750",
-                cursor: "pointer",
-              }}
-            >
-              📄 View / Print Resume
-            </button>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
-            <div>
-              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650" }}>
-                Current CGPA
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. 8.75"
-                value={cgpa}
-                onChange={(e) => setCgpa(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "8px 10px",
-                  borderRadius: "6px",
-                  border: "1px solid #d1d5db",
-                  marginTop: "4px",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650" }}>
-                12th / Diploma %
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. 86.4%"
-                value={twelfthPercent}
-                onChange={(e) => setTwelfthPercent(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "8px 10px",
-                  borderRadius: "6px",
-                  border: "1px solid #d1d5db",
-                  marginTop: "4px",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650" }}>
-                10th (SSC) %
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. 91.2%"
-                value={tenthPercent}
-                onChange={(e) => setTenthPercent(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "8px 10px",
-                  borderRadius: "6px",
-                  border: "1px solid #d1d5db",
-                  marginTop: "4px",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-          </div>
-
-          <div style={{ marginTop: "10px" }}>
-            <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650" }}>
-              Career Objective / Headline
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Aspiring Full-Stack Software Engineer with AI/ML expertise"
-              value={careerObjective}
-              onChange={(e) => setCareerObjective(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "8px 10px",
-                borderRadius: "6px",
-                border: "1px solid #d1d5db",
-                marginTop: "4px",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-
-          <div style={{ marginTop: "10px" }}>
-            <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650" }}>
-              Key Technical Skills (Comma-separated)
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Python, React, TypeScript, Node.js, SQL, OpenCV, Git"
-              value={skills}
-              onChange={(e) => setSkills(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "8px 10px",
-                borderRadius: "6px",
-                border: "1px solid #d1d5db",
-                marginTop: "4px",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-
-          <div style={{ marginTop: "10px" }}>
-            <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650" }}>
-              Academic Projects & Experience
-            </label>
-            <textarea
-              rows={2}
-              placeholder="e.g. Proxy-Resistant Attendance System using Facial Verification & Rotating QR Codes; Autonomous Drone Obstacle Detection."
-              value={projects}
-              onChange={(e) => setProjects(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "8px 10px",
-                borderRadius: "6px",
-                border: "1px solid #d1d5db",
-                marginTop: "4px",
-                fontFamily: "inherit",
-                fontSize: "13px",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-
-          {eduMsg && (
-            <p style={{ margin: "8px 0 0 0", fontSize: "13px", fontWeight: "650" }}>{eduMsg}</p>
-          )}
-
-          <button
-            type="button"
-            className="btn"
-            onClick={handleSaveEducation}
-            disabled={savingEducation}
-            style={{ marginTop: "12px", width: "100%" }}
-          >
-            {savingEducation ? "⏳ Saving Details..." : "💾 Save Educational Portfolio"}
-          </button>
-        </div>
-
-        {/* Section 3: Official Attendance Email Receipts & Notification Slips */}
+        {/* Section 2: Official Attendance Email Receipts & Notification Slips */}
         <div className="section">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
             <h4 style={{ margin: 0, color: "#111827", fontSize: "15px" }}>
@@ -970,221 +741,6 @@ export default function Profile() {
           </button>
         </div>
       </div>
-
-      {/* ============================================================ */}
-      {/* 📄 OFFICIAL RESUME VIEWER & PRINT MODAL                       */}
-      {/* ============================================================ */}
-      {showResumeModal && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(0,0,0,0.65)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 9999,
-            padding: "16px",
-            boxSizing: "border-box",
-          }}
-        >
-          <div
-            id="print-resume-content"
-            style={{
-              background: "#ffffff",
-              borderRadius: "12px",
-              maxWidth: "640px",
-              width: "100%",
-              maxHeight: "90vh",
-              overflowY: "auto",
-              padding: "24px",
-              boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
-              boxSizing: "border-box",
-              fontFamily: "'Segoe UI', Arial, sans-serif",
-            }}
-          >
-            {/* College Header */}
-            <div
-              style={{
-                borderBottom: "2px solid #ffca08",
-                paddingBottom: "12px",
-                marginBottom: "16px",
-                display: "flex",
-                alignItems: "center",
-                gap: "14px",
-              }}
-            >
-              <img
-                src={ritLogo}
-                alt="RIT"
-                style={{ width: "55px", height: "55px", objectFit: "contain" }}
-              />
-              <div style={{ flex: 1 }}>
-                <h3 style={{ margin: 0, fontSize: "16px", color: "#1e3a8a", fontWeight: "800" }}>
-                  Rajarambapu Institute of Technology, Rajaramnagar
-                </h3>
-                <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#6b7280" }}>
-                  An Autonomous Institute | Approved by AICTE | Affiliated to Shivaji University
-                </p>
-                <p style={{ margin: "2px 0 0 0", fontSize: "13px", fontWeight: "750", color: "#111" }}>
-                  OFFICIAL STUDENT ACADEMIC RESUME
-                </p>
-              </div>
-            </div>
-
-            {/* Student Bio */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "16px",
-                marginBottom: "16px",
-              }}
-            >
-              <img
-                src={avatarSrc}
-                alt={student.full_name}
-                style={{
-                  width: "75px",
-                  height: "75px",
-                  borderRadius: "50%",
-                  objectFit: "cover",
-                  border: "2px solid #ffca08",
-                }}
-              />
-              <div>
-                <h2 style={{ margin: 0, fontSize: "18px", color: "#111827" }}>
-                  {student.full_name}
-                </h2>
-                <p style={{ margin: "3px 0 0 0", fontSize: "13px", color: "#374151" }}>
-                  <b>PRN:</b> {student.prn} &nbsp;|&nbsp; <b>Class:</b> {student.year} (Div {student.division})
-                </p>
-                <p style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#374151" }}>
-                  <b>Department:</b> {student.branch}
-                </p>
-                <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#6b7280" }}>
-                  <b>Email:</b> {student.email} &nbsp;|&nbsp; <b>Phone:</b> {student.phone || "Not Listed"}
-                </p>
-              </div>
-            </div>
-
-            {/* Objective */}
-            {careerObjective && (
-              <div style={{ marginBottom: "14px" }}>
-                <h4 style={{ margin: "0 0 4px 0", fontSize: "13px", color: "#1e3a8a", borderBottom: "1px solid #e5e7eb", paddingBottom: "2px" }}>
-                  CAREER OBJECTIVE
-                </h4>
-                <p style={{ margin: 0, fontSize: "13px", color: "#374151", lineHeight: "1.4" }}>
-                  {careerObjective}
-                </p>
-              </div>
-            )}
-
-            {/* Academic Qualifications Table */}
-            <div style={{ marginBottom: "14px" }}>
-              <h4 style={{ margin: "0 0 6px 0", fontSize: "13px", color: "#1e3a8a", borderBottom: "1px solid #e5e7eb", paddingBottom: "2px" }}>
-                ACADEMIC CREDENTIALS
-              </h4>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-                <thead>
-                  <tr style={{ background: "#f8fafc", textAlign: "left" }}>
-                    <th style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>Degree / Certificate</th>
-                    <th style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>Institution</th>
-                    <th style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>Performance / Grade</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>B.Tech - {student.branch}</td>
-                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>RIT Rajaramnagar</td>
-                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", fontWeight: "700" }}>{cgpa ? `CGPA: ${cgpa}` : "Pursuing"}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>Higher Secondary (12th / Diploma)</td>
-                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>State Board / MSBTE</td>
-                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", fontWeight: "700" }}>{twelfthPercent || "Completed"}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>Secondary School (10th SSC)</td>
-                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>State Board / CBSE</td>
-                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", fontWeight: "700" }}>{tenthPercent || "Completed"}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            {/* Technical Skills */}
-            {skills && (
-              <div style={{ marginBottom: "14px" }}>
-                <h4 style={{ margin: "0 0 4px 0", fontSize: "13px", color: "#1e3a8a", borderBottom: "1px solid #e5e7eb", paddingBottom: "2px" }}>
-                  TECHNICAL SKILLS
-                </h4>
-                <p style={{ margin: 0, fontSize: "13px", color: "#374151" }}>
-                  {skills}
-                </p>
-              </div>
-            )}
-
-            {/* Academic Projects */}
-            {projects && (
-              <div style={{ marginBottom: "14px" }}>
-                <h4 style={{ margin: "0 0 4px 0", fontSize: "13px", color: "#1e3a8a", borderBottom: "1px solid #e5e7eb", paddingBottom: "2px" }}>
-                  PROJECTS & PRACTICAL WORK
-                </h4>
-                <p style={{ margin: 0, fontSize: "13px", color: "#374151", lineHeight: "1.4" }}>
-                  {projects}
-                </p>
-              </div>
-            )}
-
-            {/* Attendance Compliance Certification */}
-            <div style={{ padding: "8px 12px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "6px", marginBottom: "16px" }}>
-              <p style={{ margin: 0, fontSize: "11px", color: "#166534" }}>
-                Verified via RIT Proxy-Resistant Smart Attendance System | Supabase Cloud Registry.
-              </p>
-            </div>
-
-            {/* Modal Action Buttons */}
-            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                style={{
-                  background: "#0284c7",
-                  color: "#ffffff",
-                  border: "none",
-                  borderRadius: "6px",
-                  padding: "8px 16px",
-                  fontSize: "13px",
-                  fontWeight: "700",
-                  cursor: "pointer",
-                }}
-              >
-                🖨️ Print / Save PDF
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowResumeModal(false)}
-                style={{
-                  background: "#f3f4f6",
-                  color: "#374151",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "6px",
-                  padding: "8px 16px",
-                  fontSize: "13px",
-                  fontWeight: "700",
-                  cursor: "pointer",
-                }}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 🏥 MEDICAL / DUTY EXEMPTION (OD) LEAVE MODAL */}
       {showLeaveModal && (
@@ -1394,15 +950,17 @@ export default function Profile() {
           zIndex: 9999,
           padding: "16px"
         }}>
-          <div style={{
-            background: "#ffffff",
-            borderRadius: "16px",
-            maxWidth: "600px",
-            width: "100%",
-            overflow: "hidden",
-            boxShadow: "0 25px 50px rgba(0,0,0,0.3)",
-            border: "2px solid #ffca08"
-          }}>
+          <div
+            id="print-certificate-content"
+            style={{
+              background: "#ffffff",
+              borderRadius: "16px",
+              maxWidth: "600px",
+              width: "100%",
+              overflow: "hidden",
+              boxShadow: "0 25px 50px rgba(0,0,0,0.3)",
+              border: "2px solid #ffca08"
+            }}>
             {/* Institute Crest Header */}
             <div style={{
               background: "linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%)",
@@ -1560,10 +1118,10 @@ export default function Profile() {
           body * {
             visibility: hidden;
           }
-          #print-resume-content, #print-resume-content * {
+          #print-certificate-content, #print-certificate-content * {
             visibility: visible;
           }
-          #print-resume-content {
+          #print-certificate-content {
             position: absolute;
             left: 0;
             top: 0;
