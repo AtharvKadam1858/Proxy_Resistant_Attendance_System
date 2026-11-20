@@ -5,7 +5,7 @@ import RITLogo from "../../assets/RIT_logo.jpeg";
 import { loginUserWithSupabase, registerStudent, resetUserPasswordWithVerification } from "../../services/supabase";
 
 export default function Login() {
-  const [role, setRole] = useState("teacher");
+  const [role, setRole] = useState("student");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState("");
@@ -340,6 +340,17 @@ export default function Login() {
           <div className="tabs">
             <button
               type="button"
+              className={role === "student" ? "active" : ""}
+              onClick={() => {
+                setRole("student");
+                setMsg("");
+              }}
+            >
+              🎓 Student Login
+            </button>
+
+            <button
+              type="button"
               className={role === "teacher" ? "active" : ""}
               onClick={() => {
                 setRole("teacher");
@@ -347,18 +358,7 @@ export default function Login() {
                 setMsg("");
               }}
             >
-              Teacher Login
-            </button>
-
-            <button
-              type="button"
-              className={role === "student" ? "active" : ""}
-              onClick={() => {
-                setRole("student");
-                setMsg("");
-              }}
-            >
-              Student Login
+              👨‍🏫 Teacher Login
             </button>
 
             <button
@@ -370,7 +370,7 @@ export default function Login() {
                 setMsg("");
               }}
             >
-              Admin Login
+              🛡️ Admin Login
             </button>
           </div>
 
@@ -444,19 +444,25 @@ export default function Login() {
 
           {/* Teacher Security Notice (No Self-Registration Allowed) */}
           {role === "teacher" && (
-            <div style={{ marginTop: "18px", padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-              <span style={{ fontSize: "12px", color: "#64748b", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
-                🔒 Faculty accounts are added exclusively by Institutional Administration.
-              </span>
+            <div style={{ marginTop: "18px", padding: "14px 16px", background: "#f8fafc", borderRadius: "10px", border: "1.5px solid #cbd5e1", textAlign: "center" }}>
+              <div style={{ fontSize: "13.5px", fontWeight: "800", color: "#0f172a", marginBottom: "4px", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
+                <span>🔒</span> Faculty Self-Registration Restricted
+              </div>
+              <p style={{ margin: 0, fontSize: "12px", color: "#64748b", lineHeight: "1.5" }}>
+                Teachers cannot self-register. New faculty accounts are added exclusively by the System Administrator inside the Admin Portal.
+              </p>
             </div>
           )}
 
           {/* Admin Security Notice (No Self-Registration Allowed) */}
           {role === "admin" && (
-            <div style={{ marginTop: "18px", padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-              <span style={{ fontSize: "12px", color: "#64748b", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
-                🔒 System Administrator Access (Restricted Portal)
-              </span>
+            <div style={{ marginTop: "18px", padding: "14px 16px", background: "#f8fafc", borderRadius: "10px", border: "1.5px solid #cbd5e1", textAlign: "center" }}>
+              <div style={{ fontSize: "13.5px", fontWeight: "800", color: "#0f172a", marginBottom: "4px", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
+                <span>🛡️</span> Restricted Administrator Portal
+              </div>
+              <p style={{ margin: 0, fontSize: "12px", color: "#64748b", lineHeight: "1.5" }}>
+                Admin accounts cannot be self-registered. Exclusive login for Master Administrator (<strong style={{ color: "#0284c7" }}>admin@ritindia.edu</strong>).
+              </p>
             </div>
           )}
         </>
