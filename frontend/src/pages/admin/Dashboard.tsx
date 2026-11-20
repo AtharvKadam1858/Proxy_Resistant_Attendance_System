@@ -12,7 +12,7 @@ import {
 } from "firebase/app";
 
 import { API_URL } from "../../config";
-import { getStudentsList, addNewStudent, updateUserPassword, updateStudentByAdmin, deleteStudentByAdmin } from "../../services/supabase";
+import { getStudentsList, addNewStudent, updateUserPassword, updateStudentByAdmin, deleteStudentByAdmin, getTeachersList, addNewTeacher, deleteTeacherByAdmin } from "../../services/supabase";
 import ritLogo from "../../assets/RIT_logo.jpeg";
 
 const firebaseConfig = {
@@ -114,10 +114,78 @@ export default function AdminDashboard() {
   const [studentsLoading, setStudentsLoading] =
     useState(false);
 
-  // 🎓 Admin Navigation Tabs (Tab 1: Enroll / Add, Tab 2: Student Directory & Batch)
-  const [adminTab, setAdminTab] = useState<"directory" | "enroll">("directory");
+  // 🎓 Admin Navigation Tabs (Tab 1: Student Directory, Tab 2: Enroll Students, Tab 3: Faculty Management)
+  const [adminTab, setAdminTab] = useState<"directory" | "enroll" | "faculty">("directory");
   const [selectedDivision, setSelectedDivision] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // 👨‍🏫 Faculty / Teachers Management State
+  const [teachers, setTeachers] = useState<any[]>([]);
+  const [teacherLoading, setTeacherLoading] = useState(false);
+  const [teacherMsg, setTeacherMsg] = useState("");
+  const [teacherForm, setTeacherForm] = useState({
+    teacher_id: "",
+    full_name: "",
+    email: "",
+    phone: "",
+    department: "AIML",
+    designation: "Assistant Professor",
+    password: "",
+  });
+
+  const fetchTeachers = async () => {
+    try {
+      setTeacherLoading(true);
+      const data = await getTeachersList();
+      setTeachers(data || []);
+    } catch (e: any) {
+      console.error("Failed to fetch teachers:", e);
+    } finally {
+      setTeacherLoading(false);
+    }
+  };
+
+  const handleAddTeacher = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTeacherMsg("");
+    if (!teacherForm.teacher_id.trim() || !teacherForm.full_name.trim() || !teacherForm.email.trim()) {
+      setTeacherMsg("❌ Teacher ID, Full Name, and Institutional Email are required.");
+      return;
+    }
+    try {
+      setTeacherLoading(true);
+      const res = await addNewTeacher(teacherForm);
+      setTeacherMsg("✅ " + res.message);
+      setTeacherForm({
+        teacher_id: "",
+        full_name: "",
+        email: "",
+        phone: "",
+        department: "AIML",
+        designation: "Assistant Professor",
+        password: "",
+      });
+      fetchTeachers();
+    } catch (err: any) {
+      setTeacherMsg("❌ " + (err?.message || "Failed to add faculty member."));
+    } finally {
+      setTeacherLoading(false);
+    }
+  };
+
+  const handleDeleteTeacher = async (teacherId: string, teacherName: string) => {
+    if (!window.confirm(`Are you sure you want to remove faculty member ${teacherName} (${teacherId})?`)) return;
+    try {
+      setTeacherLoading(true);
+      await deleteTeacherByAdmin(teacherId);
+      alert(`Faculty member ${teacherName} removed.`);
+      fetchTeachers();
+    } catch (err: any) {
+      alert("Error deleting teacher: " + (err?.message || "Failed"));
+    } finally {
+      setTeacherLoading(false);
+    }
+  };
 
   // 📝 Student Record View & Edit State
   const [editingStudent, setEditingStudent] = useState<any | null>(null);
@@ -287,10 +355,12 @@ export default function AdminDashboard() {
   useEffect(() => {
     // Initial fetch in case of Supabase login or direct session
     fetchStudents(selectedYear, selectedDepartment);
+    fetchTeachers();
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         fetchStudents(selectedYear, selectedDepartment);
+        fetchTeachers();
       }
     });
 
@@ -762,6 +832,33 @@ export default function AdminDashboard() {
             >
               <span>➕</span> Enroll & Add Students (Manual / Bulk)
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAdminTab("faculty");
+                fetchTeachers();
+              }}
+              style={{
+                flex: 1,
+                padding: "12px 18px",
+                borderRadius: "9px",
+                border: "none",
+                fontSize: "14px",
+                fontWeight: "800",
+                cursor: "pointer",
+                transition: "all 0.25s ease",
+                background: adminTab === "faculty" ? "#ffca08" : "transparent",
+                color: adminTab === "faculty" ? "#000000" : "#64748b",
+                boxShadow: adminTab === "faculty" ? "0 4px 12px rgba(255,202,8,0.35)" : "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+              }}
+            >
+              <span>👨‍🏫</span> Faculty / Teacher Management
+            </button>
           </div>
 
           {/* ========================================================================= */}
@@ -1146,6 +1243,258 @@ export default function AdminDashboard() {
                   </table>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 3: FACULTY / TEACHER MANAGEMENT (ADMIN PRIVILEGED ONLY)               */}
+          {/* ========================================================================= */}
+          {adminTab === "faculty" && (
+            <div style={{ animation: "fadeIn 0.3s ease-in-out" }}>
+              <div className="admin-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>👨‍🏫 Faculty / Teacher Management</span>
+                <span style={{ fontSize: "12px", background: "#fee2e2", color: "#dc2626", padding: "4px 10px", borderRadius: "12px", fontWeight: "700" }}>
+                  🔒 Admin Exclusive Authority
+                </span>
+              </div>
+
+              {teacherMsg && (
+                <div style={{
+                  padding: "12px 16px",
+                  borderRadius: "8px",
+                  marginBottom: "16px",
+                  fontWeight: "600",
+                  fontSize: "13px",
+                  background: teacherMsg.startsWith("✅") ? "#ecfdf5" : "#fef2f2",
+                  color: teacherMsg.startsWith("✅") ? "#065f46" : "#991b1b",
+                  border: `1px solid ${teacherMsg.startsWith("✅") ? "#a7f3d0" : "#fecaca"}`
+                }}>
+                  {teacherMsg}
+                </div>
+              )}
+
+              {/* Add Teacher Form */}
+              <div style={{
+                background: "#f8fafc",
+                padding: "18px 20px",
+                borderRadius: "12px",
+                border: "1.5px solid #e2e8f0",
+                marginBottom: "24px"
+              }}>
+                <h3 style={{ margin: "0 0 14px 0", fontSize: "15px", fontWeight: "800", color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>➕</span> Add New Faculty Member
+                </h3>
+                <form onSubmit={handleAddTeacher}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#475569", marginBottom: "4px" }}>
+                        Faculty ID / Employee Code <span style={{ color: "#ef4444" }}>*</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. TCH001 or EMP102"
+                        value={teacherForm.teacher_id}
+                        onChange={(e) => setTeacherForm({ ...teacherForm, teacher_id: e.target.value })}
+                        required
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#475569", marginBottom: "4px" }}>
+                        Full Name <span style={{ color: "#ef4444" }}>*</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Dr. A. P. Sharma"
+                        value={teacherForm.full_name}
+                        onChange={(e) => setTeacherForm({ ...teacherForm, full_name: e.target.value })}
+                        required
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#475569", marginBottom: "4px" }}>
+                        Institutional Email <span style={{ color: "#ef4444" }}>*</span>
+                      </label>
+                      <input
+                        type="email"
+                        placeholder="faculty@ritindia.edu"
+                        value={teacherForm.email}
+                        onChange={(e) => setTeacherForm({ ...teacherForm, email: e.target.value })}
+                        required
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#475569", marginBottom: "4px" }}>
+                        Department <span style={{ color: "#ef4444" }}>*</span>
+                      </label>
+                      <select
+                        value={teacherForm.department}
+                        onChange={(e) => setTeacherForm({ ...teacherForm, department: e.target.value })}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                      >
+                        <option value="AIML">Artificial Intelligence & Machine Learning</option>
+                        <option value="CSE">Computer Science & Engineering</option>
+                        <option value="IT">Information Technology</option>
+                        <option value="AIDS">AI & Data Science</option>
+                        <option value="ECE">Electronics & Telecommunication</option>
+                        <option value="MECH">Mechanical Engineering</option>
+                        <option value="CIVIL">Civil Engineering</option>
+                        <option value="EE">Electrical Engineering</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#475569", marginBottom: "4px" }}>
+                        Designation
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Assistant Professor / HOD"
+                        value={teacherForm.designation}
+                        onChange={(e) => setTeacherForm({ ...teacherForm, designation: e.target.value })}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#475569", marginBottom: "4px" }}>
+                        Phone Number
+                      </label>
+                      <input
+                        type="tel"
+                        placeholder="+91 98765 43210"
+                        value={teacherForm.phone}
+                        onChange={(e) => setTeacherForm({ ...teacherForm, phone: e.target.value })}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#475569", marginBottom: "4px" }}>
+                        Login Password
+                      </label>
+                      <input
+                        type="password"
+                        placeholder="Default: Teacher@123"
+                        value={teacherForm.password}
+                        onChange={(e) => setTeacherForm({ ...teacherForm, password: e.target.value })}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: "14px", display: "flex", justifyContent: "flex-end" }}>
+                    <button
+                      type="submit"
+                      disabled={teacherLoading}
+                      style={{
+                        padding: "10px 22px",
+                        background: "#ffca08",
+                        color: "#000000",
+                        border: "none",
+                        borderRadius: "8px",
+                        fontWeight: "800",
+                        fontSize: "13px",
+                        cursor: "pointer",
+                        boxShadow: "0 2px 8px rgba(255,202,8,0.4)"
+                      }}
+                    >
+                      {teacherLoading ? "Adding Faculty..." : "➕ Register & Authorize Faculty"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Faculty Directory Table */}
+              <div style={{ background: "#ffffff", borderRadius: "12px", border: "1.5px solid #e2e8f0", overflow: "hidden" }}>
+                <div style={{ padding: "14px 18px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <h3 style={{ margin: 0, fontSize: "14px", fontWeight: "800", color: "#1e293b" }}>
+                    📋 Authorized Faculty Directory ({teachers.length} Members)
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={fetchTeachers}
+                    disabled={teacherLoading}
+                    style={{
+                      padding: "6px 12px",
+                      background: "#f1f5f9",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      cursor: "pointer"
+                    }}
+                  >
+                    🔄 Refresh List
+                  </button>
+                </div>
+
+                {teachers.length === 0 ? (
+                  <div style={{ padding: "30px", textAlign: "center", color: "#64748b", fontSize: "14px" }}>
+                    {teacherLoading ? "Loading faculty records..." : "No faculty accounts registered yet. Use the form above to enroll teachers."}
+                  </div>
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc", color: "#475569", borderBottom: "1.5px solid #e2e8f0" }}>
+                          <th style={{ padding: "10px 14px", fontWeight: "700" }}>Faculty ID</th>
+                          <th style={{ padding: "10px 14px", fontWeight: "700" }}>Full Name</th>
+                          <th style={{ padding: "10px 14px", fontWeight: "700" }}>Email</th>
+                          <th style={{ padding: "10px 14px", fontWeight: "700" }}>Dept & Designation</th>
+                          <th style={{ padding: "10px 14px", fontWeight: "700" }}>Phone</th>
+                          <th style={{ padding: "10px 14px", fontWeight: "700", textAlign: "center" }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {teachers.map((tch, idx) => (
+                          <tr key={tch.teacher_id || idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                            <td style={{ padding: "10px 14px", fontWeight: "700", color: "#0284c7" }}>
+                              {tch.teacher_id}
+                            </td>
+                            <td style={{ padding: "10px 14px", fontWeight: "600", color: "#0f172a" }}>
+                              {tch.full_name}
+                            </td>
+                            <td style={{ padding: "10px 14px", color: "#334155" }}>
+                              {tch.email}
+                            </td>
+                            <td style={{ padding: "10px 14px", color: "#475569" }}>
+                              <span style={{ fontWeight: "700", color: "#0f172a" }}>{tch.department || "AIML"}</span>
+                              {tch.designation ? ` • ${tch.designation}` : ""}
+                            </td>
+                            <td style={{ padding: "10px 14px", color: "#64748b" }}>
+                              {tch.phone || "—"}
+                            </td>
+                            <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTeacher(tch.teacher_id, tch.full_name)}
+                                style={{
+                                  padding: "5px 12px",
+                                  background: "#fee2e2",
+                                  color: "#b91c1c",
+                                  border: "1px solid #fecaca",
+                                  borderRadius: "6px",
+                                  fontSize: "12px",
+                                  fontWeight: "750",
+                                  cursor: "pointer"
+                                }}
+                              >
+                                🗑️ Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

@@ -846,3 +846,66 @@ export async function deleteStudentByAdmin(prn: string) {
   });
   return { success: true, message: `Student ${cleanPrn} removed from database.` };
 }
+
+// ---------------------------------------------------------------------
+// 10. FACULTY / TEACHER ADMINISTRATION (ADMIN ONLY)
+// ---------------------------------------------------------------------
+
+export async function getTeachersList() {
+  const data = await supabaseQuery("teachers?select=*&order=created_at.asc");
+  return data || [];
+}
+
+export async function addNewTeacher(teacherData: {
+  teacher_id: string;
+  full_name: string;
+  email: string;
+  phone?: string;
+  department: string;
+  designation?: string;
+  password?: string;
+}) {
+  const cleanId = teacherData.teacher_id.trim();
+  const cleanEmail = teacherData.email.trim().toLowerCase();
+
+  // Check if ID or Email exists
+  const existing = await supabaseQuery(
+    `teachers?or=(teacher_id.eq.${encodeURIComponent(cleanId)},email.ilike.${encodeURIComponent(cleanEmail)})&limit=1`
+  );
+  if (existing && existing.length > 0) {
+    if (existing[0].teacher_id === cleanId) {
+      throw new Error(`Faculty member with Teacher ID ${cleanId} is already registered.`);
+    }
+    throw new Error(`Faculty member with email ${cleanEmail} is already registered.`);
+  }
+
+  const payload = {
+    teacher_id: cleanId,
+    full_name: teacherData.full_name.trim(),
+    email: cleanEmail,
+    phone: teacherData.phone?.trim() || null,
+    department: teacherData.department.trim(),
+    designation: teacherData.designation?.trim() || "Assistant Professor",
+    password_hash: teacherData.password || "Teacher@123",
+  };
+
+  const inserted = await supabaseQuery("teachers", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(payload),
+  });
+
+  return {
+    success: true,
+    message: "Faculty member registered successfully!",
+    teacher: inserted && inserted.length > 0 ? inserted[0] : payload,
+  };
+}
+
+export async function deleteTeacherByAdmin(teacherId: string) {
+  const cleanId = teacherId.trim();
+  await supabaseQuery(`teachers?teacher_id=eq.${encodeURIComponent(cleanId)}`, {
+    method: "DELETE",
+  });
+  return { success: true, message: `Faculty member ${cleanId} removed successfully.` };
+}

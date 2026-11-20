@@ -2,13 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import "../../styles/login.css";
 import RITLogo from "../../assets/RIT_logo.jpeg";
 
-import {
-  loginUserWithSupabase,
-  registerStudent,
-  registerTeacher,
-  registerAdmin,
-  resetUserPasswordWithVerification
-} from "../../services/supabase";
+import { loginUserWithSupabase, registerStudent, resetUserPasswordWithVerification } from "../../services/supabase";
 
 export default function Login() {
   const [role, setRole] = useState("teacher");
@@ -90,25 +84,6 @@ export default function Login() {
   });
   const [photoPreview, setPhotoPreview] = useState("");
   const [regSuccess, setRegSuccess] = useState(false);
-
-  // 👨‍🏫 Teacher / Faculty Self-Registration State
-  const [teacherRegForm, setTeacherRegForm] = useState({
-    teacher_id: "",
-    full_name: "",
-    email: "",
-    phone: "",
-    department: "AIML",
-    designation: "Assistant Professor",
-    password: "",
-  });
-
-  // 🛡️ Admin Self-Registration State
-  const [adminRegForm, setAdminRegForm] = useState({
-    admin_id: "",
-    full_name: "",
-    email: "",
-    password: "",
-  });
 
   // Live Camera Snap State for Registration
   const [showRegCamera, setShowRegCamera] = useState(false);
@@ -345,94 +320,6 @@ export default function Login() {
     }
   };
 
-  const handleTeacherRegisterSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMsg("");
-
-    if (!teacherRegForm.teacher_id.trim()) {
-      setMsg("Please enter Teacher ID (e.g. TCH003).");
-      return;
-    }
-    if (!teacherRegForm.full_name.trim()) {
-      setMsg("Please enter your Full Name.");
-      return;
-    }
-    if (!teacherRegForm.email.trim() || !teacherRegForm.email.includes("@")) {
-      setMsg("Please enter a valid faculty college email address.");
-      return;
-    }
-    if (!teacherRegForm.phone.trim() || !/^\d{10}$/.test(teacherRegForm.phone.replace(/[\s-]/g, ""))) {
-      setMsg("Faculty 10-digit mobile number is required.");
-      return;
-    }
-    if (!teacherRegForm.password || teacherRegForm.password.length < 6) {
-      setMsg("Password must be at least 6 characters.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const result = await registerTeacher(teacherRegForm);
-      setRegSuccess(true);
-      setMsg("✅ " + result.message);
-
-      localStorage.setItem("role", "teacher");
-      localStorage.setItem("teacher_id", result.teacher.teacher_id);
-      localStorage.setItem("email", result.teacher.email);
-      localStorage.setItem("full_name", result.teacher.full_name);
-
-      setTimeout(() => {
-        window.location.href = "/teacher";
-      }, 1200);
-    } catch (err: any) {
-      console.error("Teacher registration error:", err);
-      setMsg("❌ " + (err?.message || "Faculty registration failed."));
-      setLoading(false);
-    }
-  };
-
-  const handleAdminRegisterSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMsg("");
-
-    if (!adminRegForm.admin_id.trim()) {
-      setMsg("Please enter Administrator ID (e.g. ADM003).");
-      return;
-    }
-    if (!adminRegForm.full_name.trim()) {
-      setMsg("Please enter Full Name.");
-      return;
-    }
-    if (!adminRegForm.email.trim() || !adminRegForm.email.includes("@")) {
-      setMsg("Please enter a valid administrator email address.");
-      return;
-    }
-    if (!adminRegForm.password || adminRegForm.password.length < 6) {
-      setMsg("Password must be at least 6 characters.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const result = await registerAdmin(adminRegForm);
-      setRegSuccess(true);
-      setMsg("✅ " + result.message);
-
-      localStorage.setItem("role", "admin");
-      localStorage.setItem("admin_id", result.admin.admin_id);
-      localStorage.setItem("email", result.admin.email);
-      localStorage.setItem("full_name", result.admin.full_name);
-
-      setTimeout(() => {
-        window.location.href = "/admin";
-      }, 1200);
-    } catch (err: any) {
-      console.error("Admin registration error:", err);
-      setMsg("❌ " + (err?.message || "Admin registration failed."));
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="login-box">
       <div className="login-header">
@@ -456,6 +343,7 @@ export default function Login() {
               className={role === "teacher" ? "active" : ""}
               onClick={() => {
                 setRole("teacher");
+                setIsRegistering(false);
                 setMsg("");
               }}
             >
@@ -478,6 +366,7 @@ export default function Login() {
               className={role === "admin" ? "active" : ""}
               onClick={() => {
                 setRole("admin");
+                setIsRegistering(false);
                 setMsg("");
               }}
             >
@@ -486,19 +375,11 @@ export default function Login() {
           </div>
 
           <input
-            type="text"
-            placeholder={
-              role === "student"
-                ? "Enter College Email or PRN"
-                : role === "teacher"
-                ? "Enter Faculty Email or Teacher ID"
-                : "Enter Admin Email or Admin ID"
-            }
+            type="email"
+            placeholder={role === "student" ? "Student College Email (e.g. student@ritindia.edu)" : role === "teacher" ? "Faculty Email (e.g. teacher@ritindia.edu)" : "Administrator Email (e.g. admin@ritindia.edu)"}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={loading}
-            autoCapitalize="none"
-            autoCorrect="off"
           />
 
           <input
@@ -545,8 +426,9 @@ export default function Login() {
             {loading ? "Authenticating with Cloud DB..." : `Login as ${role.charAt(0).toUpperCase() + role.slice(1)}`}
           </button>
 
-          <div style={{ marginTop: "18px" }}>
-            {role === "student" && (
+          {/* Student-Only Self-Enrollment Button */}
+          {role === "student" && (
+            <div style={{ marginTop: "18px" }}>
               <button
                 type="button"
                 className="toggle-auth-btn"
@@ -557,240 +439,27 @@ export default function Login() {
               >
                 🎓 New Student? Register yourself here (Instant Enrollment)
               </button>
-            )}
-            {role === "teacher" && (
-              <button
-                type="button"
-                className="toggle-auth-btn"
-                onClick={() => {
-                  setIsRegistering(true);
-                  setMsg("");
-                }}
-              >
-                👨‍🏫 New Faculty / Teacher? Register yourself here
-              </button>
-            )}
-            {role === "admin" && (
-              <button
-                type="button"
-                className="toggle-auth-btn"
-                onClick={() => {
-                  setIsRegistering(true);
-                  setMsg("");
-                }}
-              >
-                🛡️ New Administrator? Register new admin here
-              </button>
-            )}
-          </div>
+            </div>
+          )}
+
+          {/* Teacher Security Notice (No Self-Registration Allowed) */}
+          {role === "teacher" && (
+            <div style={{ marginTop: "18px", padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+              <span style={{ fontSize: "12px", color: "#64748b", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
+                🔒 Faculty accounts are added exclusively by Institutional Administration.
+              </span>
+            </div>
+          )}
+
+          {/* Admin Security Notice (No Self-Registration Allowed) */}
+          {role === "admin" && (
+            <div style={{ marginTop: "18px", padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+              <span style={{ fontSize: "12px", color: "#64748b", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
+                🔒 System Administrator Access (Restricted Portal)
+              </span>
+            </div>
+          )}
         </>
-      ) : role === "teacher" ? (
-        <form onSubmit={handleTeacherRegisterSubmit}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
-            <h3 style={{ margin: 0, color: "#111827", fontSize: "20px", fontWeight: "700" }}>
-              👨‍🏫 Faculty / Teacher Registration
-            </h3>
-            <button
-              type="button"
-              className="toggle-auth-btn"
-              style={{ marginTop: 0 }}
-              onClick={() => {
-                setIsRegistering(false);
-                setMsg("");
-              }}
-            >
-              ← Back to Login
-            </button>
-          </div>
-
-          <p style={{ margin: "0 0 16px 0", color: "#6b7280", fontSize: "13px", textAlign: "left" }}>
-            Register new faculty member account with official institutional credentials to manage classrooms and attendance.
-          </p>
-
-          <div className="register-grid">
-            <div className="form-group">
-              <label>Teacher ID *</label>
-              <input
-                type="text"
-                placeholder="e.g. TCH003"
-                value={teacherRegForm.teacher_id}
-                onChange={(e) => setTeacherRegForm({ ...teacherRegForm, teacher_id: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Full Name *</label>
-              <input
-                type="text"
-                placeholder="e.g. Dr. John Doe"
-                value={teacherRegForm.full_name}
-                onChange={(e) => setTeacherRegForm({ ...teacherRegForm, full_name: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="form-group">
-              <label>College Email *</label>
-              <input
-                type="email"
-                placeholder="e.g. faculty@ritindia.edu"
-                value={teacherRegForm.email}
-                onChange={(e) => setTeacherRegForm({ ...teacherRegForm, email: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Mobile Number *</label>
-              <input
-                type="tel"
-                placeholder="10-digit mobile number"
-                value={teacherRegForm.phone}
-                onChange={(e) => setTeacherRegForm({ ...teacherRegForm, phone: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Department *</label>
-              <select
-                value={teacherRegForm.department}
-                onChange={(e) => setTeacherRegForm({ ...teacherRegForm, department: e.target.value })}
-                disabled={loading}
-              >
-                <option value="AIML">AIML</option>
-                <option value="CSE">CSE</option>
-                <option value="Electrical">Electrical</option>
-                <option value="Mechanical">Mechanical</option>
-                <option value="Civil">Civil</option>
-                <option value="ETC">ETC</option>
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label>Designation *</label>
-              <select
-                value={teacherRegForm.designation}
-                onChange={(e) => setTeacherRegForm({ ...teacherRegForm, designation: e.target.value })}
-                disabled={loading}
-              >
-                <option value="Assistant Professor">Assistant Professor</option>
-                <option value="Associate Professor">Associate Professor</option>
-                <option value="Professor">Professor</option>
-                <option value="Head of Department (HOD)">Head of Department (HOD)</option>
-                <option value="Visiting Faculty">Visiting Faculty</option>
-              </select>
-            </div>
-
-            <div className="form-group register-full-width">
-              <label>Account Password (min 6 chars) *</label>
-              <input
-                type="password"
-                placeholder="Set secure password"
-                value={teacherRegForm.password}
-                onChange={(e) => setTeacherRegForm({ ...teacherRegForm, password: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            className="login-btn"
-            disabled={loading || regSuccess}
-            style={{ marginTop: "16px" }}
-          >
-            {loading ? "Registering Faculty..." : "Complete Registration & Enter Faculty Portal"}
-          </button>
-        </form>
-      ) : role === "admin" ? (
-        <form onSubmit={handleAdminRegisterSubmit}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
-            <h3 style={{ margin: 0, color: "#111827", fontSize: "20px", fontWeight: "700" }}>
-              🛡️ Administrator Registration
-            </h3>
-            <button
-              type="button"
-              className="toggle-auth-btn"
-              style={{ marginTop: 0 }}
-              onClick={() => {
-                setIsRegistering(false);
-                setMsg("");
-              }}
-            >
-              ← Back to Login
-            </button>
-          </div>
-
-          <p style={{ margin: "0 0 16px 0", color: "#6b7280", fontSize: "13px", textAlign: "left" }}>
-            Register a new system administrator account with full database management privileges.
-          </p>
-
-          <div className="register-grid">
-            <div className="form-group">
-              <label>Admin ID *</label>
-              <input
-                type="text"
-                placeholder="e.g. ADM003"
-                value={adminRegForm.admin_id}
-                onChange={(e) => setAdminRegForm({ ...adminRegForm, admin_id: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Full Name *</label>
-              <input
-                type="text"
-                placeholder="e.g. System Administrator"
-                value={adminRegForm.full_name}
-                onChange={(e) => setAdminRegForm({ ...adminRegForm, full_name: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="form-group register-full-width">
-              <label>Official Email *</label>
-              <input
-                type="email"
-                placeholder="e.g. admin@ritindia.edu"
-                value={adminRegForm.email}
-                onChange={(e) => setAdminRegForm({ ...adminRegForm, email: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="form-group register-full-width">
-              <label>Account Password (min 6 chars) *</label>
-              <input
-                type="password"
-                placeholder="Set secure admin password"
-                value={adminRegForm.password}
-                onChange={(e) => setAdminRegForm({ ...adminRegForm, password: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            className="login-btn"
-            disabled={loading || regSuccess}
-            style={{ marginTop: "16px" }}
-          >
-            {loading ? "Registering Admin..." : "Complete Registration & Enter Admin Portal"}
-          </button>
-        </form>
       ) : (
         <form onSubmit={handleRegisterSubmit}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
