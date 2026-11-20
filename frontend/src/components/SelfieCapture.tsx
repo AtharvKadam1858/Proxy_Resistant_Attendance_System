@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { API_URL } from "../../src/config";
 import { markAttendanceForStudent, getStudentProfile } from "../services/supabase";
 import {
   loadFaceApiModels,
-  analyzeLiveFrameLiveness,
+  detectFaceInFrame,
   verifyLiveFaceAgainstRegistered,
-  preWarmStudentBiometrics,
+  analyzeLiveFrameLiveness,
   getCachedDescriptor,
-  type LiveFrameAnalysis,
+  preWarmStudentBiometrics,
+  LiveFrameAnalysis,
 } from "../services/aiFaceRecognition";
 
 type Props = {
@@ -31,9 +33,9 @@ export default function SelfieCapture({
   const [cameraReady, setCameraReady] = useState(false);
   const [modelReady, setModelReady] = useState(false);
   const [faceDetected, setFaceDetected] = useState<boolean>(false);
-  const [eyesOpen, setEyesOpen] = useState<boolean>(true);
+  const [eyesOpen, setEyesOpen] = useState<boolean>(false);
   const [livenessStage, setLivenessStage] = useState<"DETECTING" | "PROMPT_BLINK" | "BLINK_DETECTED" | "VERIFIED">("DETECTING");
-  const [statusMessage, setStatusMessage] = useState<string>("Initializing High-Speed AI Models...");
+  const [statusMessage, setStatusMessage] = useState<string>("Initializing Deep Learning Biometric Engine...");
   const [verificationFeedback, setVerificationFeedback] = useState<string | null>(null);
 
   const isVerifyingRef = useRef(false);
@@ -46,17 +48,17 @@ export default function SelfieCapture({
   const cachedProfileRef = useRef<any>(null);
   const cachedDescriptorRef = useRef<Float32Array | null>(null);
 
-  // 🔊 Synthesize High-Speed Success Audio Chime
+  // Sensory audio chime & haptic vibration
   const playVerificationChime = () => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.type = "sine";
-      osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
-      osc.frequency.exponentialRampToValueAtTime(783.99, audioCtx.currentTime + 0.12); // G5
-      gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime); // A5 note
+      osc.frequency.exponentialRampToValueAtTime(1320, audioCtx.currentTime + 0.15); // E6 note
+      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
       osc.connect(gain);
       gain.connect(audioCtx.destination);
       osc.start();
@@ -450,62 +452,52 @@ export default function SelfieCapture({
             livenessStage === "VERIFIED"
               ? "#ecfdf5"
               : livenessStage === "BLINK_DETECTED"
-              ? "#fef3c7"
-              : faceDetected && !eyesOpen
-              ? "#fef2f2"
-              : faceDetected
               ? "#eff6ff"
+              : faceDetected
+              ? "#f0fdf4"
               : "#fff7ed",
           border: `1.5px solid ${
             livenessStage === "VERIFIED"
               ? "#10b981"
               : livenessStage === "BLINK_DETECTED"
-              ? "#f59e0b"
-              : faceDetected && !eyesOpen
-              ? "#ef4444"
-              : faceDetected
               ? "#3b82f6"
+              : faceDetected
+              ? "#22c55e"
               : "#fdba74"
           }`,
-          padding: "6px 16px",
+          padding: "6px 14px",
           borderRadius: "20px",
-          fontSize: "13px",
-          fontWeight: "800",
+          fontSize: "12.5px",
+          fontWeight: "750",
           color:
             livenessStage === "VERIFIED"
-              ? "#065f46"
+              ? "#047857"
               : livenessStage === "BLINK_DETECTED"
-              ? "#92400e"
-              : faceDetected && !eyesOpen
-              ? "#991b1b"
-              : faceDetected
               ? "#1d4ed8"
+              : faceDetected
+              ? "#15803d"
               : "#9a3412",
-          marginBottom: "12px",
+          marginBottom: "10px",
           boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
         }}
       >
         <span>
           {livenessStage === "VERIFIED"
-            ? "✨"
+            ? "🟢"
             : livenessStage === "BLINK_DETECTED"
             ? "👁️"
-            : faceDetected && !eyesOpen
-            ? "❌"
             : faceDetected
-            ? "👀"
+            ? "🟢"
             : "🔴"}
         </span>
         <span>
           {livenessStage === "VERIFIED"
-            ? "✨ Verified! Recording Attendance..."
+            ? "Liveness Confirmed! Matching Face..."
             : livenessStage === "BLINK_DETECTED"
-            ? "👁️ Blink Detected! Reopen eyes..."
-            : faceDetected && !eyesOpen
-            ? "❌ Eyes Closed! Open eyes to verify"
+            ? "Blink Detected! Open eyes to capture"
             : faceDetected
-            ? "👀 Auto-Marking in 2s (or Blink / Tap Button)"
-            : "No Face Detected (Center Face in Oval)"}
+            ? "Human Face Detected & Centered"
+            : "No Face Detected — Look at Camera"}
         </span>
       </div>
 
@@ -514,50 +506,26 @@ export default function SelfieCapture({
         style={{
           position: "relative",
           width: "320px",
-          height: "360px",
+          height: "320px",
           margin: "0 auto",
-          borderRadius: "16px",
+          borderRadius: "24px",
           overflow: "hidden",
+          background: "#0f172a",
           border: `3px solid ${
             livenessStage === "VERIFIED"
               ? "#10b981"
-              : faceDetected && !eyesOpen
-              ? "#ef4444"
-              : faceDetected
+              : livenessStage === "BLINK_DETECTED"
               ? "#3b82f6"
-              : "#94a3b8"
-          }`,
-          boxShadow:
-            livenessStage === "VERIFIED"
-              ? "0 0 24px rgba(16, 185, 129, 0.5)"
-              : faceDetected && !eyesOpen
-              ? "0 0 20px rgba(239, 68, 68, 0.4)"
               : faceDetected
-              ? "0 0 20px rgba(59, 130, 246, 0.45)"
-              : "none",
-          background: "#0f172a",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+              ? "#22c55e"
+              : "#e2e8f0"
+          }`,
+          boxShadow: faceDetected
+            ? "0 8px 24px rgba(34, 197, 94, 0.25)"
+            : "0 4px 16px rgba(0,0,0,0.15)",
+          transition: "border-color 0.25s ease, box-shadow 0.25s ease",
         }}
       >
-        {!cameraReady && (
-          <div style={{ color: "#fff", padding: "20px" }}>
-            <div
-              style={{
-                width: "36px",
-                height: "36px",
-                border: "3px solid #ffca08",
-                borderTopColor: "transparent",
-                borderRadius: "50%",
-                animation: "spin 0.75s linear infinite",
-                margin: "0 auto 12px auto",
-              }}
-            />
-            <p style={{ margin: 0, fontSize: "13px" }}>Starting front selfie camera...</p>
-          </div>
-        )}
-
         <video
           ref={videoRef}
           autoPlay
@@ -567,133 +535,120 @@ export default function SelfieCapture({
             width: "100%",
             height: "100%",
             objectFit: "cover",
-            display: cameraReady ? "block" : "none",
-            transform: "scaleX(-1)", // Mirror mode for natural selfie experience
+            transform: "scaleX(-1)", // Mirror selfie feed
           }}
         />
+        <canvas ref={canvasRef} style={{ display: "none" }} />
 
-        {/* Biometric Face Placement Oval Overlay */}
+        {/* Biometric Face Placement Oval Guide */}
         <div
           style={{
             position: "absolute",
-            inset: "25px 40px",
-            border: `2px dashed ${
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            width: "185px",
+            height: "235px",
+            borderRadius: "50%",
+            border: `2.5px dashed ${
               livenessStage === "VERIFIED"
                 ? "#10b981"
-                : faceDetected && !eyesOpen
-                ? "#ef4444"
+                : livenessStage === "BLINK_DETECTED"
+                ? "#38bdf8"
                 : faceDetected
-                ? "#3b82f6"
-                : "rgba(255,255,255,0.7)"
+                ? "rgba(34, 197, 94, 0.9)"
+                : "rgba(255, 255, 255, 0.6)"
             }`,
-            borderRadius: "50%",
             pointerEvents: "none",
-            boxShadow:
-              livenessStage === "VERIFIED"
-                ? "inset 0 0 22px rgba(16, 185, 129, 0.4)"
-                : faceDetected && !eyesOpen
-                ? "inset 0 0 20px rgba(239, 68, 68, 0.35)"
-                : faceDetected
-                ? "inset 0 0 18px rgba(59, 130, 246, 0.3)"
-                : "inset 0 0 12px rgba(0,0,0,0.5)",
-            transition: "all 0.25s ease",
+            boxShadow: faceDetected ? "0 0 15px rgba(34, 197, 94, 0.4)" : "none",
+            transition: "all 0.2s ease",
           }}
         />
 
-        {/* Real-Time Live Status Banner over Video */}
-        <div
-          style={{
-            position: "absolute",
-            bottom: "10px",
-            left: "10px",
-            right: "10px",
-            background: "rgba(15, 23, 42, 0.88)",
-            backdropFilter: "blur(6px)",
-            padding: "8px 12px",
-            borderRadius: "8px",
-            color: "#fff",
-            fontSize: "11.5px",
-            fontWeight: "600",
-            textAlign: "center",
-            lineHeight: "1.4",
-          }}
-        >
-          {loading ? (
-            <span style={{ color: "#38bdf8" }}>⚡ {verificationFeedback || "Verifying Biometrics..."}</span>
-          ) : (
-            <span>{statusMessage}</span>
-          )}
-        </div>
+        {/* Loading Overlay */}
+        {loading && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.85)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "white",
+              padding: "16px",
+            }}
+          >
+            <div
+              style={{
+                width: "36px",
+                height: "36px",
+                border: "3.5px solid rgba(255,255,255,0.2)",
+                borderTopColor: "#38bdf8",
+                borderRadius: "50%",
+                animation: "spin 0.8s linear infinite",
+                marginBottom: "12px",
+              }}
+            />
+            <div style={{ fontSize: "14px", fontWeight: "700" }}>Verifying Identity...</div>
+            <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+              Matching 128D embedding with database
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Emergency & Manual Verification Button */}
-      <div style={{ marginTop: "16px" }}>
+      {/* Guidance Text */}
+      <div
+        style={{
+          marginTop: "10px",
+          fontSize: "12px",
+          color: faceDetected ? "#15803d" : "#64748b",
+          fontWeight: "600",
+          minHeight: "20px",
+        }}
+      >
+        {statusMessage}
+      </div>
+
+      {verificationFeedback && (
+        <div style={{ fontSize: "11px", color: "#0284c7", fontWeight: "600", marginTop: "2px" }}>
+          {verificationFeedback}
+        </div>
+      )}
+
+      {/* Emergency / Direct Manual Mark Attendance Button */}
+      <div style={{ marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px", alignItems: "center" }}>
         <button
           onClick={handleManualAction}
-          disabled={loading || !cameraReady || !faceDetected || !eyesOpen}
+          disabled={loading || !cameraReady || !modelReady}
           style={{
-            width: "100%",
-            maxWidth: "320px",
-            padding: "13px 20px",
-            borderRadius: "10px",
+            background: faceDetected && eyesOpen ? "linear-gradient(135deg, #16a34a, #15803d)" : "#475569",
+            color: "#ffffff",
             border: "none",
-            background:
-              livenessStage === "VERIFIED"
-                ? "#10b981"
-                : faceDetected && !eyesOpen
-                ? "#fca5a5"
-                : faceDetected
-                ? "#2563eb"
-                : "#e2e8f0",
-            color:
-              livenessStage === "VERIFIED" || (faceDetected && eyesOpen)
-                ? "#ffffff"
-                : "#94a3b8",
-            fontWeight: "800",
-            fontSize: "14px",
-            cursor: faceDetected && eyesOpen && !loading ? "pointer" : "not-allowed",
-            boxShadow: faceDetected && eyesOpen ? "0 4px 14px rgba(37, 99, 235, 0.35)" : "none",
-            transition: "all 0.25s ease",
+            padding: "10px 22px",
+            borderRadius: "10px",
+            fontSize: "13px",
+            fontWeight: "750",
+            cursor: loading ? "not-allowed" : "pointer",
+            boxShadow: faceDetected ? "0 4px 14px rgba(22, 163, 74, 0.35)" : "none",
             display: "inline-flex",
             alignItems: "center",
-            justifyContent: "center",
             gap: "8px",
+            transition: "all 0.2s ease",
           }}
         >
-          {loading ? (
-            <>
-              <span>⏳</span> Matching Face Biometrics...
-            </>
-          ) : livenessStage === "VERIFIED" ? (
-            <>
-              <span>✨</span> Verified! Recording Attendance...
-            </>
-          ) : faceDetected && !eyesOpen ? (
-            <>
-              <span>❌</span> Eyes Closed (Open Eyes to Mark)
-            </>
-          ) : faceDetected ? (
-            <>
-              <span>⚡</span> Mark Attendance Now (Verify My Face)
-            </>
-          ) : (
-            <>
-              <span>🚫</span> Please Face the Camera
-            </>
-          )}
+          <span>⚡ Mark Attendance Now (Verify My Face)</span>
         </button>
-
-        <p style={{ margin: "10px 0 0 0", color: "#64748b", fontSize: "11.5px" }}>
-          🛡️ <strong>Hands-Free or 1-Tap Attendance:</strong> Auto-marks in ~2 seconds (or blink naturally). If needed, tap the blue button to verify face immediately with eyes open.
-        </p>
+        <span style={{ fontSize: "10.5px", color: "#94a3b8" }}>
+          Autonomous: Blinking naturally or holding face steady also auto-records attendance
+        </span>
       </div>
-
-      <canvas ref={canvasRef} style={{ display: "none" }} />
 
       <style>{`
         @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>

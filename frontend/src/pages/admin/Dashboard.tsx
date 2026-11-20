@@ -12,19 +12,7 @@ import {
 } from "firebase/app";
 
 import { API_URL } from "../../config";
-import {
-  getStudentsList,
-  addNewStudent,
-  updateUserPassword,
-  updateStudentByAdmin,
-  deleteStudentByAdmin,
-  registerTeacher,
-  registerAdmin,
-  getTeachersList,
-  getAdminsList,
-  deleteTeacherByAdmin,
-  deleteAdminByAdmin
-} from "../../services/supabase";
+import { getStudentsList, addNewStudent, updateUserPassword, updateStudentByAdmin, deleteStudentByAdmin } from "../../services/supabase";
 import ritLogo from "../../assets/RIT_logo.jpeg";
 
 const firebaseConfig = {
@@ -126,123 +114,10 @@ export default function AdminDashboard() {
   const [studentsLoading, setStudentsLoading] =
     useState(false);
 
-  // 🎓 Admin Navigation Tabs (Tab 1: Student Directory, Tab 2: Enroll Students, Tab 3: Faculty & Admins)
-  const [adminTab, setAdminTab] = useState<"directory" | "enroll" | "faculty_admin">("directory");
+  // 🎓 Admin Navigation Tabs (Tab 1: Enroll / Add, Tab 2: Student Directory & Batch)
+  const [adminTab, setAdminTab] = useState<"directory" | "enroll">("directory");
   const [selectedDivision, setSelectedDivision] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-
-  // 🛡️ Faculty & Admin State
-  const [teachers, setTeachers] = useState<any[]>([]);
-  const [admins, setAdmins] = useState<any[]>([]);
-  const [facultyLoading, setFacultyLoading] = useState(false);
-
-  // New Teacher Form in Admin
-  const [newTeacherForm, setNewTeacherForm] = useState({
-    teacher_id: "",
-    full_name: "",
-    email: "",
-    phone: "",
-    department: "AIML",
-    designation: "Assistant Professor",
-    password: "",
-  });
-  const [newTeacherLoading, setNewTeacherLoading] = useState(false);
-  const [newTeacherMsg, setNewTeacherMsg] = useState("");
-
-  // New Admin Form in Admin
-  const [newAdminForm, setNewAdminForm] = useState({
-    admin_id: "",
-    full_name: "",
-    email: "",
-    password: "",
-  });
-  const [newAdminLoading, setNewAdminLoading] = useState(false);
-  const [newAdminMsg, setNewAdminMsg] = useState("");
-
-  const fetchTeachersAndAdmins = async () => {
-    try {
-      setFacultyLoading(true);
-      const [tList, aList] = await Promise.all([
-        getTeachersList(),
-        getAdminsList()
-      ]);
-      setTeachers(tList || []);
-      setAdmins(aList || []);
-    } catch (err: any) {
-      console.error("Error fetching faculty & admins:", err);
-    } finally {
-      setFacultyLoading(false);
-    }
-  };
-
-  const handleCreateTeacher = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setNewTeacherMsg("");
-    setNewTeacherLoading(true);
-    try {
-      const res = await registerTeacher(newTeacherForm);
-      setNewTeacherMsg("✅ " + res.message);
-      setNewTeacherForm({
-        teacher_id: "",
-        full_name: "",
-        email: "",
-        phone: "",
-        department: "AIML",
-        designation: "Assistant Professor",
-        password: "",
-      });
-      await fetchTeachersAndAdmins();
-    } catch (err: any) {
-      setNewTeacherMsg("❌ " + (err?.message || "Failed to add faculty."));
-    } finally {
-      setNewTeacherLoading(false);
-    }
-  };
-
-  const handleCreateAdmin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setNewAdminMsg("");
-    setNewAdminLoading(true);
-    try {
-      const res = await registerAdmin(newAdminForm);
-      setNewAdminMsg("✅ " + res.message);
-      setNewAdminForm({
-        admin_id: "",
-        full_name: "",
-        email: "",
-        password: "",
-      });
-      await fetchTeachersAndAdmins();
-    } catch (err: any) {
-      setNewAdminMsg("❌ " + (err?.message || "Failed to add administrator."));
-    } finally {
-      setNewAdminLoading(false);
-    }
-  };
-
-  const handleDeleteTeacher = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to remove faculty member ${name} (${id})?`)) return;
-    try {
-      await deleteTeacherByAdmin(id);
-      await fetchTeachersAndAdmins();
-    } catch (err: any) {
-      alert("❌ " + (err?.message || "Failed to delete teacher."));
-    }
-  };
-
-  const handleDeleteAdmin = async (id: string, name: string) => {
-    if (id === "ADM001") {
-      alert("⚠️ Root Administrator (ADM001) cannot be deleted.");
-      return;
-    }
-    if (!confirm(`Are you sure you want to remove administrator ${name} (${id})?`)) return;
-    try {
-      await deleteAdminByAdmin(id);
-      await fetchTeachersAndAdmins();
-    } catch (err: any) {
-      alert("❌ " + (err?.message || "Failed to delete administrator."));
-    }
-  };
 
   // 📝 Student Record View & Edit State
   const [editingStudent, setEditingStudent] = useState<any | null>(null);
@@ -887,33 +762,6 @@ export default function AdminDashboard() {
             >
               <span>➕</span> Enroll & Add Students (Manual / Bulk)
             </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setAdminTab("faculty_admin");
-                fetchTeachersAndAdmins();
-              }}
-              style={{
-                flex: 1,
-                padding: "12px 18px",
-                borderRadius: "9px",
-                border: "none",
-                fontSize: "14px",
-                fontWeight: "800",
-                cursor: "pointer",
-                transition: "all 0.25s ease",
-                background: adminTab === "faculty_admin" ? "#ffca08" : "transparent",
-                color: adminTab === "faculty_admin" ? "#000000" : "#64748b",
-                boxShadow: adminTab === "faculty_admin" ? "0 4px 12px rgba(255,202,8,0.35)" : "none",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-              }}
-            >
-              <span>🛡️</span> Manage Faculty & Admins
-            </button>
           </div>
 
           {/* ========================================================================= */}
@@ -1270,51 +1118,26 @@ export default function AdminDashboard() {
                               <td>{student.email}</td>
                               <td>{student.phone || "Not set"}</td>
                               <td>
-                                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openStudentEditor(student);
-                                    }}
-                                    style={{
-                                      padding: "5px 10px",
-                                      background: "#ffca08",
-                                      color: "#000000",
-                                      border: "none",
-                                      borderRadius: "6px",
-                                      fontWeight: "750",
-                                      fontSize: "12px",
-                                      cursor: "pointer",
-                                      boxShadow: "0 1px 4px rgba(255,202,8,0.3)"
-                                    }}
-                                  >
-                                    👁️ View / Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDeleteStudent(student.prn, student.full_name);
-                                    }}
-                                    style={{
-                                      padding: "5px 9px",
-                                      background: "#fee2e2",
-                                      color: "#dc2626",
-                                      border: "1px solid #fca5a5",
-                                      borderRadius: "6px",
-                                      fontWeight: "750",
-                                      fontSize: "12px",
-                                      cursor: "pointer",
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: "3px"
-                                    }}
-                                    title="Delete Student from Cloud Database"
-                                  >
-                                    🗑️ Delete
-                                  </button>
-                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openStudentEditor(student);
+                                  }}
+                                  style={{
+                                    padding: "5px 10px",
+                                    background: "#ffca08",
+                                    color: "#000000",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                    fontWeight: "750",
+                                    fontSize: "12px",
+                                    cursor: "pointer",
+                                    boxShadow: "0 1px 4px rgba(255,202,8,0.3)"
+                                  }}
+                                >
+                                  👁️ View / Edit
+                                </button>
                               </td>
                             </tr>
                           );
@@ -1323,281 +1146,6 @@ export default function AdminDashboard() {
                   </table>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* ========================================================================= */}
-          {/* TAB 3: FACULTY & ADMIN DIRECTORY & REGISTRATION                           */}
-          {/* ========================================================================= */}
-          {adminTab === "faculty_admin" && (
-            <div style={{ marginTop: 0 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px", marginBottom: "30px" }}>
-                
-                {/* 1. Register New Faculty */}
-                <div style={{ background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: "14px", padding: "20px", boxShadow: "0 4px 12px rgba(0,0,0,0.05)" }}>
-                  <div style={{ fontSize: "17px", fontWeight: "800", color: "#1e3a8a", marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span>👨‍🏫</span> Add New Faculty / Teacher
-                  </div>
-                  {newTeacherMsg && (
-                    <div style={{ padding: "8px 12px", borderRadius: "8px", marginBottom: "12px", fontSize: "13px", fontWeight: "600", background: newTeacherMsg.startsWith("✅") ? "#dcfce7" : "#fee2e2", color: newTeacherMsg.startsWith("✅") ? "#166534" : "#991b1b" }}>
-                      {newTeacherMsg}
-                    </div>
-                  )}
-                  <form onSubmit={handleCreateTeacher} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                    <div>
-                      <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>Teacher ID *</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. TCH003"
-                        value={newTeacherForm.teacher_id}
-                        onChange={(e) => setNewTeacherForm({ ...newTeacherForm, teacher_id: e.target.value })}
-                        style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>Full Name *</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. Prof. Rajesh Sharma"
-                        value={newTeacherForm.full_name}
-                        onChange={(e) => setNewTeacherForm({ ...newTeacherForm, full_name: e.target.value })}
-                        style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>College Email *</label>
-                      <input
-                        type="email"
-                        required
-                        placeholder="e.g. rajesh.sharma@ritindia.edu"
-                        value={newTeacherForm.email}
-                        onChange={(e) => setNewTeacherForm({ ...newTeacherForm, email: e.target.value })}
-                        style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                      />
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                      <div>
-                        <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>Mobile Number *</label>
-                        <input
-                          type="tel"
-                          required
-                          placeholder="10 digits"
-                          value={newTeacherForm.phone}
-                          onChange={(e) => setNewTeacherForm({ ...newTeacherForm, phone: e.target.value })}
-                          style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>Department *</label>
-                        <select
-                          value={newTeacherForm.department}
-                          onChange={(e) => setNewTeacherForm({ ...newTeacherForm, department: e.target.value })}
-                          style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                        >
-                          <option value="AIML">AIML</option>
-                          <option value="CSE">CSE</option>
-                          <option value="Electrical">Electrical</option>
-                          <option value="Mechanical">Mechanical</option>
-                          <option value="Civil">Civil</option>
-                          <option value="ETC">ETC</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                      <div>
-                        <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>Designation</label>
-                        <select
-                          value={newTeacherForm.designation}
-                          onChange={(e) => setNewTeacherForm({ ...newTeacherForm, designation: e.target.value })}
-                          style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                        >
-                          <option value="Assistant Professor">Assistant Professor</option>
-                          <option value="Associate Professor">Associate Professor</option>
-                          <option value="Professor">Professor</option>
-                          <option value="Head of Department (HOD)">HOD</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>Password *</label>
-                        <input
-                          type="password"
-                          required
-                          placeholder="Min 6 chars"
-                          value={newTeacherForm.password}
-                          onChange={(e) => setNewTeacherForm({ ...newTeacherForm, password: e.target.value })}
-                          style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                        />
-                      </div>
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={newTeacherLoading}
-                      style={{ marginTop: "8px", padding: "10px", background: "#1e3a8a", color: "#ffffff", border: "none", borderRadius: "8px", fontWeight: "750", cursor: "pointer" }}
-                    >
-                      {newTeacherLoading ? "Adding Faculty..." : "➕ Add Faculty to Cloud DB"}
-                    </button>
-                  </form>
-                </div>
-
-                {/* 2. Register New Admin */}
-                <div style={{ background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: "14px", padding: "20px", boxShadow: "0 4px 12px rgba(0,0,0,0.05)" }}>
-                  <div style={{ fontSize: "17px", fontWeight: "800", color: "#065f46", marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span>🛡️</span> Add New Administrator
-                  </div>
-                  {newAdminMsg && (
-                    <div style={{ padding: "8px 12px", borderRadius: "8px", marginBottom: "12px", fontSize: "13px", fontWeight: "600", background: newAdminMsg.startsWith("✅") ? "#dcfce7" : "#fee2e2", color: newAdminMsg.startsWith("✅") ? "#166534" : "#991b1b" }}>
-                      {newAdminMsg}
-                    </div>
-                  )}
-                  <form onSubmit={handleCreateAdmin} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                    <div>
-                      <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>Admin ID *</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. ADM003"
-                        value={newAdminForm.admin_id}
-                        onChange={(e) => setNewAdminForm({ ...newAdminForm, admin_id: e.target.value })}
-                        style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>Full Name *</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. Exam Section Administrator"
-                        value={newAdminForm.full_name}
-                        onChange={(e) => setNewAdminForm({ ...newAdminForm, full_name: e.target.value })}
-                        style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>Administrator Email *</label>
-                      <input
-                        type="email"
-                        required
-                        placeholder="e.g. admin.exam@ritindia.edu"
-                        value={newAdminForm.email}
-                        onChange={(e) => setNewAdminForm({ ...newAdminForm, email: e.target.value })}
-                        style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: "12px", fontWeight: "700", color: "#475569", display: "block", marginBottom: "3px" }}>Admin Password *</label>
-                      <input
-                        type="password"
-                        required
-                        placeholder="Min 6 chars"
-                        value={newAdminForm.password}
-                        onChange={(e) => setNewAdminForm({ ...newAdminForm, password: e.target.value })}
-                        style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: "1px solid #cbd5e1", fontSize: "13px", boxSizing: "border-box" }}
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={newAdminLoading}
-                      style={{ marginTop: "18px", padding: "10px", background: "#065f46", color: "#ffffff", border: "none", borderRadius: "8px", fontWeight: "750", cursor: "pointer" }}
-                    >
-                      {newAdminLoading ? "Adding Admin..." : "🛡️ Add Administrator to Cloud DB"}
-                    </button>
-                  </form>
-                </div>
-              </div>
-
-              {/* 3. Live Faculty & Admin Tables */}
-              <div style={{ marginBottom: "25px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                  <div style={{ fontSize: "16px", fontWeight: "800", color: "#1e293b" }}>
-                    👨‍🏫 Registered Faculty ({teachers.length})
-                  </div>
-                  <button
-                    type="button"
-                    onClick={fetchTeachersAndAdmins}
-                    style={{ padding: "5px 12px", background: "#f1f5f9", border: "1px solid #cbd5e1", borderRadius: "6px", fontSize: "12px", fontWeight: "600", cursor: "pointer" }}
-                  >
-                    🔄 Refresh Lists
-                  </button>
-                </div>
-                <div className="table-responsive" style={{ background: "#ffffff", borderRadius: "10px", border: "1px solid #e2e8f0", overflowX: "auto" }}>
-                  <table className="student-table" style={{ margin: 0 }}>
-                    <thead>
-                      <tr>
-                        <th>ID</th>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>Phone</th>
-                        <th>Department</th>
-                        <th>Designation</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {teachers.map((t) => (
-                        <tr key={t.teacher_id}>
-                          <td><strong>{t.teacher_id}</strong></td>
-                          <td>{t.full_name}</td>
-                          <td>{t.email}</td>
-                          <td>{t.phone || "-"}</td>
-                          <td><span className="badge badge-branch">{t.department}</span></td>
-                          <td>{t.designation || "Faculty"}</td>
-                          <td>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteTeacher(t.teacher_id, t.full_name)}
-                              style={{ padding: "4px 8px", background: "#fee2e2", color: "#dc2626", border: "1px solid #fca5a5", borderRadius: "5px", fontSize: "11px", fontWeight: "700", cursor: "pointer" }}
-                            >
-                              🗑️ Delete
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div>
-                <div style={{ fontSize: "16px", fontWeight: "800", color: "#1e293b", marginBottom: "10px" }}>
-                  🛡️ Registered Administrators ({admins.length})
-                </div>
-                <div className="table-responsive" style={{ background: "#ffffff", borderRadius: "10px", border: "1px solid #e2e8f0", overflowX: "auto" }}>
-                  <table className="student-table" style={{ margin: 0 }}>
-                    <thead>
-                      <tr>
-                        <th>Admin ID</th>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {admins.map((a) => (
-                        <tr key={a.admin_id}>
-                          <td><strong>{a.admin_id}</strong></td>
-                          <td>{a.full_name}</td>
-                          <td>{a.email}</td>
-                          <td>
-                            {a.admin_id === "ADM001" ? (
-                              <span style={{ fontSize: "11px", color: "#059669", fontWeight: "700" }}>🔒 Root Admin</span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteAdmin(a.admin_id, a.full_name)}
-                                style={{ padding: "4px 8px", background: "#fee2e2", color: "#dc2626", border: "1px solid #fca5a5", borderRadius: "5px", fontSize: "11px", fontWeight: "700", cursor: "pointer" }}
-                              >
-                                🗑️ Delete
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
             </div>
           )}
 

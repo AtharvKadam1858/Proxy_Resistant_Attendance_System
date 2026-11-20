@@ -56,15 +56,16 @@ export async function loginUserWithSupabase(email: string, role: string, passwor
 
   if (role === "student") {
     const data = await supabaseQuery(
-      `students?or=(email.ilike.${encodeURIComponent(cleanEmail)},prn.ilike.${encodeURIComponent(cleanEmail)})&limit=1`
+      `students?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
     );
     if (!data || data.length === 0) {
-      throw new Error(`❌ No student account registered with identifier/email: ${cleanEmail}. Please verify your PRN or email, or register below.`);
+      throw new Error(`❌ No student account registered with email: ${cleanEmail}. Please verify your email or register below.`);
     }
     const student = data[0];
-    const registeredPass = (student.password_hash || "").trim();
-    const passMatches = cleanPass === registeredPass || cleanPass === "Student@1234" || cleanPass === "Password123";
-    if (!passMatches) {
+    if (!student.password_hash) {
+      throw new Error("❌ Account password not set. Please use 'Forgot Password?' below to set your password.");
+    }
+    if (student.password_hash.trim() !== cleanPass) {
       throw new Error("❌ Incorrect password! Please enter the correct password for this account.");
     }
     return {
@@ -77,15 +78,16 @@ export async function loginUserWithSupabase(email: string, role: string, passwor
 
   if (role === "teacher") {
     const data = await supabaseQuery(
-      `teachers?or=(email.ilike.${encodeURIComponent(cleanEmail)},teacher_id.ilike.${encodeURIComponent(cleanEmail)})&limit=1`
+      `teachers?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
     );
     if (!data || data.length === 0) {
-      throw new Error(`❌ No faculty account registered with identifier/email: ${cleanEmail}. You can login using your email (e.g. teacher@ritindia.edu or kk.tangod@ritindia.edu) or Teacher ID (TCH001).`);
+      throw new Error(`❌ No faculty account registered with email: ${cleanEmail}. Please check the Teacher Login tab or contact admin.`);
     }
     const teacher = data[0];
-    const registeredPass = (teacher.password_hash || "").trim();
-    const passMatches = cleanPass === registeredPass || cleanPass === "Teacher@1234" || cleanPass === "Password123";
-    if (!passMatches) {
+    if (!teacher.password_hash) {
+      throw new Error("❌ Faculty password not set. Please use 'Forgot Password?' below to set your password.");
+    }
+    if (teacher.password_hash.trim() !== cleanPass) {
       throw new Error("❌ Incorrect password! Please enter the correct faculty password.");
     }
     return {
@@ -98,15 +100,16 @@ export async function loginUserWithSupabase(email: string, role: string, passwor
 
   if (role === "admin") {
     const data = await supabaseQuery(
-      `admins?or=(email.ilike.${encodeURIComponent(cleanEmail)},admin_id.ilike.${encodeURIComponent(cleanEmail)})&limit=1`
+      `admins?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
     );
     if (!data || data.length === 0) {
-      throw new Error(`❌ No administrator account registered with identifier/email: ${cleanEmail}. You can login using admin@ritindia.edu or Admin ID ADM001.`);
+      throw new Error(`❌ No administrator account registered with email: ${cleanEmail}.`);
     }
     const admin = data[0];
-    const registeredPass = (admin.password_hash || "").trim();
-    const passMatches = cleanPass === registeredPass || cleanPass === "Admin@1234" || cleanPass === "Password123";
-    if (!passMatches) {
+    if (!admin.password_hash) {
+      throw new Error("❌ Admin password not set. Please use 'Forgot Password?' below to set your password.");
+    }
+    if (admin.password_hash.trim() !== cleanPass) {
       throw new Error("❌ Incorrect password! Please enter the correct administrator password.");
     }
     return {
@@ -842,129 +845,4 @@ export async function deleteStudentByAdmin(prn: string) {
     method: "DELETE",
   });
   return { success: true, message: `Student ${cleanPrn} removed from database.` };
-}
-
-export async function registerTeacher(teacherData: {
-  teacher_id: string;
-  full_name: string;
-  email: string;
-  phone: string;
-  department: string;
-  designation?: string;
-  password?: string;
-}) {
-  const cleanId = teacherData.teacher_id.trim();
-  const cleanEmail = teacherData.email.trim().toLowerCase();
-
-  if (!cleanId) throw new Error("❌ Teacher ID is required.");
-  if (!teacherData.full_name.trim()) throw new Error("❌ Full Name is required.");
-  if (!cleanEmail) throw new Error("❌ College email is required.");
-  if (!teacherData.department.trim()) throw new Error("❌ Department is required.");
-
-  // Check if Teacher ID or Email already exists
-  const existing = await supabaseQuery(
-    `teachers?or=(teacher_id.eq.${encodeURIComponent(cleanId)},email.ilike.${encodeURIComponent(cleanEmail)})&limit=1`
-  );
-  if (existing && existing.length > 0) {
-    if (existing[0].teacher_id.toLowerCase() === cleanId.toLowerCase()) {
-      throw new Error(`❌ Faculty with ID ${cleanId} is already registered.`);
-    }
-    throw new Error(`❌ Faculty with email ${cleanEmail} is already registered.`);
-  }
-
-  const payload: any = {
-    teacher_id: cleanId,
-    full_name: teacherData.full_name.trim(),
-    email: cleanEmail,
-    phone: teacherData.phone.trim(),
-    department: teacherData.department.trim(),
-    designation: teacherData.designation?.trim() || "Faculty",
-    password_hash: teacherData.password?.trim() || "Password123",
-  };
-
-  const inserted = await supabaseQuery("teachers", {
-    method: "POST",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify(payload),
-  });
-
-  return {
-    success: true,
-    message: "Faculty registration successful! You can now log in.",
-    teacher: inserted && inserted.length > 0 ? inserted[0] : payload,
-  };
-}
-
-export async function registerAdmin(adminData: {
-  admin_id: string;
-  full_name: string;
-  email: string;
-  password?: string;
-}) {
-  const cleanId = adminData.admin_id.trim();
-  const cleanEmail = adminData.email.trim().toLowerCase();
-
-  if (!cleanId) throw new Error("❌ Admin ID is required.");
-  if (!adminData.full_name.trim()) throw new Error("❌ Full Name is required.");
-  if (!cleanEmail) throw new Error("❌ Administrator email is required.");
-
-  // Check if Admin ID or Email already exists
-  const existing = await supabaseQuery(
-    `admins?or=(admin_id.eq.${encodeURIComponent(cleanId)},email.ilike.${encodeURIComponent(cleanEmail)})&limit=1`
-  );
-  if (existing && existing.length > 0) {
-    if (existing[0].admin_id.toLowerCase() === cleanId.toLowerCase()) {
-      throw new Error(`❌ Administrator with ID ${cleanId} is already registered.`);
-    }
-    throw new Error(`❌ Administrator with email ${cleanEmail} is already registered.`);
-  }
-
-  const payload: any = {
-    admin_id: cleanId,
-    full_name: adminData.full_name.trim(),
-    email: cleanEmail,
-    password_hash: adminData.password?.trim() || "Admin@1234",
-  };
-
-  const inserted = await supabaseQuery("admins", {
-    method: "POST",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify(payload),
-  });
-
-  return {
-    success: true,
-    message: "Administrator registration successful! You can now log in.",
-    admin: inserted && inserted.length > 0 ? inserted[0] : payload,
-  };
-}
-
-export async function getTeachersList(department?: string) {
-  let endpoint = "teachers?select=*&order=full_name.asc";
-  if (department && department.trim()) {
-    endpoint += `&department=eq.${encodeURIComponent(department.trim())}`;
-  }
-  const data = await supabaseQuery(endpoint);
-  return data || [];
-}
-
-export async function getAdminsList() {
-  const data = await supabaseQuery("admins?select=*&order=full_name.asc");
-  return data || [];
-}
-
-export async function deleteTeacherByAdmin(teacherId: string) {
-  const cleanId = teacherId.trim();
-  await supabaseQuery(`teachers?teacher_id=eq.${encodeURIComponent(cleanId)}`, {
-    method: "DELETE",
-  });
-  return { success: true, message: `Faculty ${cleanId} removed from database.` };
-}
-
-export async function deleteAdminByAdmin(adminId: string) {
-  const cleanId = adminId.trim();
-  await supabaseQuery(`admins?admin_id=eq.${encodeURIComponent(cleanId)}`, {
-    method: "DELETE",
-  });
-  return { success: true, message: `Administrator ${cleanId} removed from database.` };
 }
