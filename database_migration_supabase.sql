@@ -127,24 +127,29 @@ CREATE POLICY "Public Read Students" ON students FOR SELECT USING (true);
 CREATE POLICY "Public Read Sessions" ON attendance_sessions FOR SELECT USING (true);
 CREATE POLICY "Public Read Attendance" ON attendance FOR SELECT USING (true);
 
--- Allow authenticated/service writes
+-- Allow authenticated/service writes and deletions
 CREATE POLICY "Allow Insert Admins" ON admins FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow Update Admins" ON admins FOR UPDATE USING (true);
+CREATE POLICY "Allow Delete Admins" ON admins FOR DELETE USING (true);
 
 CREATE POLICY "Allow Insert Teachers" ON teachers FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow Update Teachers" ON teachers FOR UPDATE USING (true);
+CREATE POLICY "Allow Delete Teachers" ON teachers FOR DELETE USING (true);
 
 CREATE POLICY "Allow Insert Students" ON students FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow Update Students" ON students FOR UPDATE USING (true);
+CREATE POLICY "Allow Delete Students" ON students FOR DELETE USING (true);
 
 CREATE POLICY "Allow Insert Sessions" ON attendance_sessions FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow Update Sessions" ON attendance_sessions FOR UPDATE USING (true);
+CREATE POLICY "Allow Delete Sessions" ON attendance_sessions FOR DELETE USING (true);
 
 CREATE POLICY "Allow Insert Attendance" ON attendance FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow Update Attendance" ON attendance FOR UPDATE USING (true);
+CREATE POLICY "Allow Delete Attendance" ON attendance FOR DELETE USING (true);
 
 -- ---------------------------------------------------------------------
--- 7. INITIAL MASTER & SEED DATA (FROM CAPSTONE PROJECT RECORDS)
+-- 7. INITIAL MASTER DATA (INSTITUTIONAL FACULTY & ADMINS)
 -- ---------------------------------------------------------------------
 
 -- Admins
@@ -167,25 +172,5 @@ ON CONFLICT (teacher_id) DO UPDATE SET
     department = EXCLUDED.department,
     designation = EXCLUDED.designation;
 
--- Students (Core Team & Enrolled Students from encodings & database records)
-INSERT INTO students (prn, full_name, email, phone, year, branch, division, gender, face_folder)
-VALUES 
-    ('2467001', 'Atharv Kadam', '2467001@ritindia.edu', '8805871396', 'Final Year', 'AIML', 'A', 'Male', 'Atharwa.jpg'),
-    ('2467007', 'Om Bhosale', '2467007@ritindia.edu', '9123456780', 'Final Year', 'AIML', 'A', 'Male', 'Omkar.png'),
-    ('2317049', 'Vinayak Dhulubulu', '2317049@ritindia.edu', '9123456781', 'Final Year', 'AIML', 'A', 'Male', 'Vijay.jpg'),
-    ('2317047', 'Prathmesh Salunke', '2317047@ritindia.edu', '9999999999', 'Final Year', 'AIML', 'A', 'Male', 'Pradeep.png'),
-    ('2317029', 'Sneha Khot', '2317029@ritindia.edu', '9123456782', 'Final Year', 'AIML', 'A', 'Female', 'Sneha.jpg'),
-    ('2317028', 'Anushka Patil', '2317028@ritindia.edu', '9123456783', 'Final Year', 'AIML', 'A', 'Female', 'Anushka.png'),
-    ('2317044', 'Pranjali More', '2317044@ritindia.edu', '9123456784', 'Final Year', 'AIML', 'A', 'Female', 'Pranjali.png'),
-    ('2317050', 'Siddhi Jadhav', '2317050@ritindia.edu', '9123456785', 'Final Year', 'AIML', 'A', 'Female', 'Siddhi.jpg'),
-    ('2317051', 'Shriraj Desai', '2317051@ritindia.edu', '9123456786', 'Final Year', 'AIML', 'A', 'Male', 'Shriraj.jpg'),
-    ('2317060', 'Vedant Pawar', '2317060@ritindia.edu', '9123456787', 'Final Year', 'AIML', 'A', 'Male', 'Vedant.jpg'),
-    ('2417001', 'Rahul Patil', '2417001@ritindia.edu', '9123456788', 'Third Year', 'AIML', 'A', 'Male', 'Rajvardhan.jpg')
-ON CONFLICT (prn) DO UPDATE SET 
-    full_name = EXCLUDED.full_name,
-    email = EXCLUDED.email,
-    phone = EXCLUDED.phone,
-    year = EXCLUDED.year,
-    branch = EXCLUDED.branch,
-    division = EXCLUDED.division,
-    face_folder = EXCLUDED.face_folder;
+-- Note: Students enroll fresh through the Web Portal ("New Student? Register here")
+-- with their actual live webcam photos and verified academic details.

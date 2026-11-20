@@ -77,22 +77,6 @@ export default function Profile() {
   const [submittingLeave, setSubmittingLeave] = useState(false);
   const [leaveMsg, setLeaveMsg] = useState("");
 
-  // 📍 Proactively request / pre-warm student location when opening the portal
-  useEffect(() => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          try {
-            localStorage.setItem("student_last_lat", pos.coords.latitude.toString());
-            localStorage.setItem("student_last_lng", pos.coords.longitude.toString());
-          } catch {}
-        },
-        () => {},
-        { enableHighAccuracy: false, timeout: 6000, maximumAge: 300000 }
-      );
-    }
-  }, []);
-
   useEffect(() => {
     const loadProfile = async () => {
       try {

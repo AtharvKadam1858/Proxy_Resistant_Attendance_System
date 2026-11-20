@@ -488,20 +488,7 @@ export default function ScanQR() {
               const distText = verifiedDistance !== null ? `${verifiedDistance.toFixed(1)}m (Inside Classroom)` : "Inside Perimeter";
               const timeStr = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
-              // 🚀 Multi-Channel Automated Email Dispatch + In-App Receipt Log
-              dispatchAttendanceEmailNotification({
-                sessionId,
-                prn: studentPrn,
-                studentName: fullName,
-                studentEmail,
-                subject: "Classroom Lecture Session",
-                department: localStorage.getItem("department") || "Engineering",
-                year: localStorage.getItem("year") || "Final Year",
-                lectureDate: new Date().toLocaleDateString("en-IN"),
-                lectureTime: timeStr,
-                distanceMeters: verifiedDistance,
-              }).catch((e) => console.debug("Email notification trigger:", e));
-
+              // Email notification is already cleanly dispatched once by markAttendanceForStudent in Supabase
               setSlipData({
                 prn: studentPrn,
                 studentName: fullName,

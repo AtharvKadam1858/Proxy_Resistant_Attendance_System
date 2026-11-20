@@ -210,11 +210,22 @@ export default function SelfieCapture({
       if (!ctx) throw new Error("Could not initialize biometric canvas context.");
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // 🛑 STRICT PRE-CAPTURE EYE OPENNESS CHECK:
-      // Guarantees no attendance can EVER be recorded with closed eyes
+      // 🛑 STRICT PRE-CAPTURE EYE OPENNESS & FULL-FACE COMPLETENESS CHECK:
+      // Guarantees no attendance can EVER be recorded with half-face, side profile, or closed eyes
       const liveCheck = await analyzeLiveFrameLiveness(canvas);
       if (!liveCheck.faceDetected) {
         alert("❌ Biometric Verification Blocked:\n\nNo face detected. Please face the camera directly.");
+        stopCamera();
+        onFailed();
+        return;
+      }
+      if (!liveCheck.isFullFrontalFace) {
+        alert(
+          `❌ Biometric Verification Blocked:\n\n` +
+          `${liveCheck.fullFaceReason || "Incomplete face detected."}\n\n` +
+          `A complete, centered, forward-facing face is strictly required.\n` +
+          `Half-face, side-profile, and cropped camera poses are strictly prohibited.`
+        );
         stopCamera();
         onFailed();
         return;
@@ -337,6 +348,18 @@ export default function SelfieCapture({
           return;
         }
 
+        // 🛑 1b. FULL-FACE FRONTAL & ANTI-HALF-FACE VALIDATION:
+        if (!analysis.isFullFrontalFace) {
+          setFaceDetected(false);
+          setEyesOpen(false);
+          setLivenessStage("DETECTING");
+          baselineOpenEarRef.current = 0;
+          eyeClosedDetectedRef.current = false;
+          faceLockStartRef.current = 0; // RESET timer immediately on half-face!
+          setStatusMessage(analysis.fullFaceReason || "⚠️ Full face required! Please face forward inside the oval.");
+          return;
+        }
+
         setFaceDetected(true);
         if (faceLockStartRef.current === 0) {
           faceLockStartRef.current = performance.now();
@@ -422,6 +445,15 @@ export default function SelfieCapture({
     }
 
     const currentAnalysis = latestAnalysisRef.current;
+
+    // Strict Anti-Proxy: Reject if half-face, side profile, or incomplete face!
+    if (currentAnalysis && !currentAnalysis.isFullFrontalFace) {
+      alert(
+        "❌ Biometric Verification Blocked:\n\n" +
+        (currentAnalysis.fullFaceReason || "Half-face or incomplete face detected.\n\nPlease look directly at the camera with your full face centered inside the oval guide.")
+      );
+      return;
+    }
 
     // Strict Anti-Proxy: Reject if eyes are closed!
     if (currentAnalysis && (currentAnalysis.eyesClosed || currentAnalysis.ear < 0.21)) {

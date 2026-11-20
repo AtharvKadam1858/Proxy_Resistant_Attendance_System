@@ -103,6 +103,188 @@ export interface LiveFrameAnalysis {
   rightEar: number;
   eyesOpen: boolean;
   eyesClosed: boolean;
+  isFullFrontalFace: boolean;
+  fullFaceReason?: string;
+  yawRatio: number;
+  faceWidthRatio: number;
+}
+
+export interface FullFaceValidationResult {
+  valid: boolean;
+  reason: string;
+  yawRatio: number;
+  faceWidthRatio: number;
+}
+
+/**
+ * 🛡️ Validates whether a detected face is a COMPLETE, CENTERED, FORWARD-FACING FRONTAL FACE.
+ * Strictly blocks:
+ * - Half-face / turned head poses (Yaw asymmetry)
+ * - Cropped face cut off at camera edges
+ * - Face too far / tiny slice of face
+ * - Partial occlusions (missing eye, nose, or jawline)
+ */
+export function validateFullFrontalFace(
+  detection: faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }>,
+  frameWidth: number,
+  frameHeight: number
+): FullFaceValidationResult {
+  if (!detection || !detection.detection || !detection.landmarks) {
+    return {
+      valid: false,
+      reason: "❌ No human face detected. Please look directly at the camera.",
+      yawRatio: 1.0,
+      faceWidthRatio: 0,
+    };
+  }
+
+  const box = detection.detection.box;
+  const safeFrameW = Math.max(1, frameWidth);
+  const safeFrameH = Math.max(1, frameHeight);
+
+  // 1. Detection Confidence Check (Rejects noisy or partial artifacts)
+  if (detection.detection.score < 0.50) {
+    return {
+      valid: false,
+      reason: "❌ Unclear face detection. Please face the camera in good lighting.",
+      yawRatio: 1.0,
+      faceWidthRatio: box.width / safeFrameW,
+    };
+  }
+
+  // 2. Anti-Edge Cutoff Check: Bounding box must have margin inside the frame
+  const marginX = safeFrameW * 0.035; // 3.5% margin from left/right borders
+  const marginY = safeFrameH * 0.035; // 3.5% margin from top/bottom borders
+  if (
+    box.x < marginX ||
+    box.y < marginY ||
+    box.x + box.width > safeFrameW - marginX ||
+    box.y + box.height > safeFrameH - marginY
+  ) {
+    return {
+      valid: false,
+      reason: "❌ Incomplete Face: Face is cut off at the camera edge. Please center your full face inside the oval guide.",
+      yawRatio: 1.0,
+      faceWidthRatio: box.width / safeFrameW,
+    };
+  }
+
+  // 3. Minimum Face Size Ratio (Rejects tiny, distant, or cropped faces)
+  const faceWidthRatio = box.width / safeFrameW;
+  const faceHeightRatio = box.height / safeFrameH;
+  if (faceWidthRatio < 0.20 || faceHeightRatio < 0.20) {
+    return {
+      valid: false,
+      reason: "❌ Face Too Far: Please bring your face closer to the camera to fill the oval guide.",
+      yawRatio: 1.0,
+      faceWidthRatio,
+    };
+  }
+
+  // 4. Landmark Points Completeness Check
+  const landmarks = detection.landmarks;
+  const leftEye = landmarks.getLeftEye();
+  const rightEye = landmarks.getRightEye();
+  const nose = landmarks.getNose();
+  const jaw = landmarks.getJawOutline();
+  const mouth = landmarks.getMouth();
+
+  if (
+    !leftEye || leftEye.length < 6 ||
+    !rightEye || rightEye.length < 6 ||
+    !nose || nose.length < 4 ||
+    !jaw || jaw.length < 15 ||
+    !mouth || mouth.length < 12
+  ) {
+    return {
+      valid: false,
+      reason: "❌ Facial features incomplete. Both eyes, nose, mouth, and chin must be clearly visible.",
+      yawRatio: 1.0,
+      faceWidthRatio,
+    };
+  }
+
+  // 5. Inter-Ocular Eye Spacing Check (Both eyes must be present and spaced properly)
+  const leftEyeCenter = {
+    x: (leftEye[0].x + leftEye[3].x) / 2,
+    y: (leftEye[1].y + leftEye[4].y) / 2,
+  };
+  const rightEyeCenter = {
+    x: (rightEye[0].x + rightEye[3].x) / 2,
+    y: (rightEye[1].y + rightEye[4].y) / 2,
+  };
+  const interOcularDist = pointDistance(leftEyeCenter, rightEyeCenter);
+  if (interOcularDist < box.width * 0.24) {
+    return {
+      valid: false,
+      reason: "❌ Both eyes must be visible. Half face or profile angle is strictly prohibited.",
+      yawRatio: 1.0,
+      faceWidthRatio,
+    };
+  }
+
+  // 6. Yaw Symmetry (Distance from Left Eye Center to Nose Tip vs Right Eye Center to Nose Tip)
+  const noseTip = nose[3] || nose[nose.length - 1] || nose[0];
+  const distLeftEyeToNose = pointDistance(leftEyeCenter, noseTip);
+  const distRightEyeToNose = pointDistance(rightEyeCenter, noseTip);
+
+  if (distLeftEyeToNose <= 0 || distRightEyeToNose <= 0) {
+    return {
+      valid: false,
+      reason: "❌ Facial geometry distorted. Please look directly at the camera.",
+      yawRatio: 1.0,
+      faceWidthRatio,
+    };
+  }
+
+  const yawRatio = distLeftEyeToNose / distRightEyeToNose;
+  // In a forward-facing frontal face, yawRatio is between 0.60 and 1.65.
+  // Half face / turned poses yield extreme ratios (<0.58 or >1.72).
+  if (yawRatio < 0.60 || yawRatio > 1.65) {
+    return {
+      valid: false,
+      reason: "❌ Half-Face / Turned Pose Detected: Please face the camera straight on with your full face.",
+      yawRatio,
+      faceWidthRatio,
+    };
+  }
+
+  // 7. Jawline Symmetry Check (Left jaw vs Right jaw from nose tip)
+  const leftJawPt = jaw[2] || jaw[0];
+  const rightJawPt = jaw[jaw.length - 3] || jaw[jaw.length - 1];
+  const leftJawDist = pointDistance(leftJawPt, noseTip);
+  const rightJawDist = pointDistance(rightJawPt, noseTip);
+  if (leftJawDist > 0 && rightJawDist > 0) {
+    const jawRatio = leftJawDist / rightJawDist;
+    if (jawRatio < 0.55 || jawRatio > 1.82) {
+      return {
+        valid: false,
+        reason: "❌ Partial Face Detected: Full jawline and both cheeks must be visible.",
+        yawRatio,
+        faceWidthRatio,
+      };
+    }
+  }
+
+  // 8. Individual Eye Width Balance (Ensure neither eye is cut off)
+  const leftEyeWidth = pointDistance(leftEye[0], leftEye[3]);
+  const rightEyeWidth = pointDistance(rightEye[0], rightEye[3]);
+  const eyeRatio = Math.max(leftEyeWidth, rightEyeWidth) / Math.max(1, Math.min(leftEyeWidth, rightEyeWidth));
+  if (eyeRatio > 1.75) {
+    return {
+      valid: false,
+      reason: "❌ Uneven Eye Visibility: One eye is obscured or out of frame.",
+      yawRatio,
+      faceWidthRatio,
+    };
+  }
+
+  return {
+    valid: true,
+    reason: "",
+    yawRatio,
+    faceWidthRatio,
+  };
 }
 
 /**
@@ -131,8 +313,18 @@ export async function analyzeLiveFrameLiveness(
         rightEar: 0,
         eyesOpen: false,
         eyesClosed: true,
+        isFullFrontalFace: false,
+        fullFaceReason: "⚠️ Center your face inside the oval guide",
+        yawRatio: 1.0,
+        faceWidthRatio: 0,
       };
     }
+
+    const frameW = (videoOrCanvas as any).width || (videoOrCanvas as any).videoWidth || 640;
+    const frameH = (videoOrCanvas as any).height || (videoOrCanvas as any).videoHeight || 480;
+
+    // Full Frontal Completeness Check
+    const fullFaceCheck = validateFullFrontalFace(detection, frameW, frameH);
 
     const landmarks = detection.landmarks;
     const leftEye = landmarks.getLeftEye();
@@ -147,6 +339,10 @@ export async function analyzeLiveFrameLiveness(
         rightEar: 0,
         eyesOpen: false,
         eyesClosed: true,
+        isFullFrontalFace: false,
+        fullFaceReason: "⚠️ Both eyes must be clearly visible",
+        yawRatio: fullFaceCheck.yawRatio,
+        faceWidthRatio: fullFaceCheck.faceWidthRatio,
       };
     }
 
@@ -168,6 +364,10 @@ export async function analyzeLiveFrameLiveness(
       rightEar,
       eyesOpen,
       eyesClosed,
+      isFullFrontalFace: fullFaceCheck.valid,
+      fullFaceReason: fullFaceCheck.reason,
+      yawRatio: fullFaceCheck.yawRatio,
+      faceWidthRatio: fullFaceCheck.faceWidthRatio,
     };
   } catch (err) {
     console.debug("Liveness analysis frame probe error:", err);
@@ -179,6 +379,9 @@ export async function analyzeLiveFrameLiveness(
       rightEar: 0,
       eyesOpen: false,
       eyesClosed: true,
+      isFullFrontalFace: false,
+      yawRatio: 1.0,
+      faceWidthRatio: 0,
     };
   }
 }
@@ -380,7 +583,24 @@ export async function verifyLiveFaceAgainstRegistered(
     };
   }
 
-  // 🛑 2. FACIAL LANDMARK INTEGRITY CHECK:
+  // 🛑 2. FULL-FACE COMPLETENESS & ANTI-HALF-FACE VALIDATION:
+  const frameW = (capturedCanvasOrVideo as any).width || (capturedCanvasOrVideo as any).videoWidth || 640;
+  const frameH = (capturedCanvasOrVideo as any).height || (capturedCanvasOrVideo as any).videoHeight || 480;
+  const fullFaceCheck = validateFullFrontalFace(liveDetection, frameW, frameH);
+  if (!fullFaceCheck.valid) {
+    console.warn("[Face Verification] Rejected non-frontal / incomplete face:", fullFaceCheck.reason);
+    return {
+      verified: false,
+      score: 0.1,
+      euclideanDistance: 1.0,
+      message: fullFaceCheck.reason,
+      faceDetected: true,
+      landmarksDetected: true,
+      registeredFaceFound: true,
+    };
+  }
+
+  // 🛑 2a. FACIAL LANDMARK INTEGRITY CHECK:
   const landmarks = liveDetection.landmarks;
   const leftEye = landmarks.getLeftEye();
   const rightEye = landmarks.getRightEye();
@@ -404,8 +624,7 @@ export async function verifyLiveFaceAgainstRegistered(
   const rightEar = calculateEyeAspectRatio(rightEye);
   const avgEar = (leftEar + rightEar) / 2.0;
 
-  // Strict check: Closed eye EAR in 68-point landmarks is typically 0.15 - 0.205.
-  // Both eyes must be open with average EAR >= 0.21 and neither eye below 0.19.
+  // Strict check: Both eyes must be open with average EAR >= 0.21 and neither eye below 0.19.
   if (avgEar < 0.21 || leftEar < 0.19 || rightEar < 0.19) {
     console.warn(`[Face Verification] Rejected closed/squinting eyes: avg=${avgEar.toFixed(3)}, left=${leftEar.toFixed(3)}, right=${rightEar.toFixed(3)}`);
     return {
@@ -423,8 +642,8 @@ export async function verifyLiveFaceAgainstRegistered(
   const distance = faceapi.euclideanDistance(registeredDescriptor, liveDetection.descriptor);
   console.log(`⚡ [High-Speed Face Match for ${studentName}] Euclidean Distance:`, distance);
 
-  // Production Threshold: 0.68 bridges mobile camera variance while firmly blocking imposters
-  const PRODUCTION_MATCH_THRESHOLD = 0.68;
+  // Production Strict Threshold: 0.55 ensures ONLY true matching frontal face of the registered student passes!
+  const PRODUCTION_MATCH_THRESHOLD = 0.55;
   const isMatch = distance <= PRODUCTION_MATCH_THRESHOLD;
 
   // Mathematically sound normalized cosine similarity: cos(theta) = 1 - (d^2 / 2)
