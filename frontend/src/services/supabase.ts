@@ -858,7 +858,36 @@ export async function submitStudentLeaveWithDocument(payload: StudentLeaveApplic
     submitted_at: nowIso,
   };
 
-  // 1. Store the official submission record in attendance_notifications
+  let validTeacherId = "TCH001";
+  try {
+    const tchs = await supabaseQuery("teachers?select=teacher_id&limit=1");
+    if (tchs && tchs.length > 0 && tchs[0].teacher_id) {
+      validTeacherId = tchs[0].teacher_id;
+    }
+  } catch {}
+
+  // 1. Ensure foreign-key session exists in attendance_sessions
+  try {
+    await supabaseQuery("attendance_sessions", {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        qr_token: `TOKEN_${sessionId}`,
+        teacher_id: validTeacherId,
+        subject: subName,
+        department: student.branch || "AIML",
+        year: student.year || "TY",
+        lecture_date: payload.leave_date,
+        start_time: new Date().toTimeString().split(" ")[0],
+        status: "ended",
+      }),
+    });
+  } catch (sessErr) {
+    console.debug("Session insert handled:", sessErr);
+  }
+
+  // 2. Store the official submission record in attendance_notifications
   await supabaseQuery("attendance_notifications", {
     method: "POST",
     headers: { Prefer: "return=representation" },
@@ -880,14 +909,14 @@ export async function submitStudentLeaveWithDocument(payload: StudentLeaveApplic
     }),
   });
 
-  // 2. Also register initial record in attendance table
+  // 3. Also register initial record in attendance table
   try {
     await supabaseQuery("attendance", {
       method: "POST",
       headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
       body: JSON.stringify({
         session_id: sessionId,
-        teacher_id: "ADMIN",
+        teacher_id: validTeacherId,
         student_name: student.full_name,
         teacher_name: "College Administration",
         prn: cleanPrn,
@@ -994,6 +1023,36 @@ export async function updateLeaveApplicationDecision(params: {
   const verifiedCode = isApproved ? 1 : -1;
   const adminLabel = params.adminName || "Admin (admin@ritindia.edu)";
   const nowIso = new Date().toISOString();
+  const timeStr = new Date().toTimeString().split(" ")[0];
+
+  let validTeacherId = "TCH001";
+  try {
+    const tchs = await supabaseQuery("teachers?select=teacher_id&limit=1");
+    if (tchs && tchs.length > 0 && tchs[0].teacher_id) {
+      validTeacherId = tchs[0].teacher_id;
+    }
+  } catch {}
+
+  // 0. Ensure foreign-key session exists in attendance_sessions
+  try {
+    await supabaseQuery("attendance_sessions", {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+      body: JSON.stringify({
+        session_id: params.sessionId,
+        qr_token: `TOKEN_${params.sessionId}`,
+        teacher_id: validTeacherId,
+        subject: params.subject,
+        department: params.department,
+        year: params.year,
+        lecture_date: params.lectureDate,
+        start_time: timeStr,
+        status: "ended",
+      }),
+    });
+  } catch (sessErr) {
+    console.debug("Session ensure note:", sessErr);
+  }
 
   // 1. Update status in attendance_notifications
   await supabaseQuery(`attendance_notifications?id=eq.${params.applicationId}`, {
@@ -1039,12 +1098,34 @@ export async function updateLeaveApplicationDecision(params: {
         }),
       });
     } else {
+      // Ensure foreign-key session exists in attendance_sessions
+      try {
+        await supabaseQuery("attendance_sessions", {
+          method: "POST",
+          headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+          body: JSON.stringify({
+            session_id: params.sessionId,
+            qr_token: `TOKEN_${params.sessionId}`,
+            teacher_id: validTeacherId,
+            subject: params.subject,
+            department: params.department,
+            year: params.year,
+            lecture_date: params.lectureDate,
+            start_time: new Date().toTimeString().split(" ")[0],
+            status: "ended",
+          }),
+        });
+      } catch (sessErr) {
+        console.debug("Session ensure note:", sessErr);
+      }
+
       // Create new record
       await supabaseQuery("attendance", {
         method: "POST",
+        headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
         body: JSON.stringify({
           session_id: params.sessionId,
-          teacher_id: "ADMIN",
+          teacher_id: validTeacherId,
           student_name: params.studentName,
           teacher_name: adminLabel,
           prn: params.prn,
