@@ -6,7 +6,7 @@ import {
   getStudentProfile,
   updateStudentProfilePhoto,
   updateUserPassword,
-  applyStudentLeave,
+  submitStudentLeaveWithDocument,
   getStudentAttendanceHistory,
 } from "../../services/supabase";
 import {
@@ -57,11 +57,21 @@ export default function Profile() {
   const [attendanceStats, setAttendanceStats] = useState<{ total: number; present: number; percentage: number } | null>(null);
   const [showCertificateModal, setShowCertificateModal] = useState(false);
 
-  // 🏥 Medical / OD Leave Application State
+  // 🏥 Medical / OD Leave & Certificate Application State
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [leaveType, setLeaveType] = useState("Medical / Sick Leave");
   const [leaveDate, setLeaveDate] = useState(new Date().toISOString().split("T")[0]);
+  const [leaveSubject, setLeaveSubject] = useState("Machine Learning & Deep Learning");
+  const [leaveTimeSlot, setLeaveTimeSlot] = useState("10:15 AM - 11:15 AM");
   const [leaveReason, setLeaveReason] = useState("");
+  const [leaveDocument, setLeaveDocument] = useState<{
+    name: string;
+    type: string;
+    base64: string;
+    sizeBytes: number;
+  } | null>(null);
+  const [leaveDocPreview, setLeaveDocPreview] = useState<string | null>(null);
+  const [leaveDocError, setLeaveDocError] = useState("");
   const [submittingLeave, setSubmittingLeave] = useState(false);
   const [leaveMsg, setLeaveMsg] = useState("");
 
@@ -227,23 +237,68 @@ export default function Profile() {
     }
   };
 
+  const handleLeaveFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLeaveDocError("");
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 12 * 1024 * 1024) {
+      setLeaveDocError("❌ File size must be under 12MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result as string;
+      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+      setLeaveDocument({
+        name: file.name,
+        type: file.type || (isPdf ? "application/pdf" : "image/jpeg"),
+        base64: base64,
+        sizeBytes: file.size,
+      });
+      if (file.type.startsWith("image/") && !isPdf) {
+        setLeaveDocPreview(base64);
+      } else {
+        setLeaveDocPreview(null);
+      }
+    };
+    reader.onerror = () => {
+      setLeaveDocError("❌ Failed to process selected file.");
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleApplyLeave = async () => {
-    if (!student || !leaveReason.trim()) {
-      alert("Please enter the reason for your leave request.");
+    if (!student) return;
+    if (!leaveReason.trim()) {
+      alert("Please enter the reason for your leave/certificate request.");
       return;
     }
     try {
       setSubmittingLeave(true);
       setLeaveMsg("");
-      await applyStudentLeave({
+      await submitStudentLeaveWithDocument({
         prn: student.prn,
         leave_type: leaveType,
         leave_date: leaveDate,
+        subject: leaveSubject,
+        lecture_time: leaveTimeSlot,
         reason: leaveReason.trim(),
+        document: leaveDocument,
       });
-      setLeaveMsg("✅ Leave application submitted to faculty for verification!");
-      setLeaveReason("");
-      setTimeout(() => setShowLeaveModal(false), 2000);
+      setLeaveMsg("✅ Official leave application & certificate uploaded successfully for Admin verification!");
+      setTimeout(() => {
+        setLeaveReason("");
+        setLeaveDocument(null);
+        setLeaveDocPreview(null);
+        setShowLeaveModal(false);
+        setLeaveMsg("");
+      }, 2500);
+      try {
+        const receipts = await getStudentNotificationReceipts(student.prn);
+        setNotificationReceipts(receipts);
+      } catch {}
     } catch (e: any) {
       setLeaveMsg("❌ " + (e?.message || "Failed to submit leave application."));
     } finally {
@@ -742,7 +797,7 @@ export default function Profile() {
         </div>
       </div>
 
-      {/* 🏥 MEDICAL / DUTY EXEMPTION (OD) LEAVE MODAL */}
+      {/* 🏥 MEDICAL / DUTY EXEMPTION (OD) & CERTIFICATE LEAVE MODAL */}
       {showLeaveModal && (
         <div
           style={{
@@ -763,24 +818,41 @@ export default function Profile() {
           <div
             style={{
               background: "#ffffff",
-              borderRadius: "12px",
-              maxWidth: "480px",
+              borderRadius: "14px",
+              maxWidth: "540px",
               width: "100%",
+              maxHeight: "92vh",
+              overflowY: "auto",
               padding: "24px",
               boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
               boxSizing: "border-box",
             }}
           >
-            <h3 style={{ margin: "0 0 10px 0", color: "#111827", fontSize: "17px" }}>
-              🏥 Student Leave / Duty Exemption (OD)
-            </h3>
-            <p style={{ margin: "0 0 14px 0", fontSize: "13px", color: "#6b7280" }}>
-              Submit an official leave request to faculty for attendance exemption.
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <h3 style={{ margin: 0, color: "#111827", fontSize: "18px", fontWeight: "800" }}>
+                📑 Submit Leave & Official Certificate
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowLeaveModal(false)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  fontSize: "18px",
+                  cursor: "pointer",
+                  color: "#6b7280",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#6b7280" }}>
+              Submit your medical certificate, duty exemption letter (OD), or sports document to the Administration for attendance validation and defaulter exemption.
             </p>
 
             <div style={{ marginBottom: "12px" }}>
-              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650", display: "block", marginBottom: "4px" }}>
-                Select Leave Category
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "700", display: "block", marginBottom: "4px" }}>
+                Select Leave Category <span style={{ color: "#ef4444" }}>*</span>
               </label>
               <select
                 value={leaveType}
@@ -788,53 +860,108 @@ export default function Profile() {
                 style={{
                   width: "100%",
                   padding: "9px 12px",
-                  borderRadius: "6px",
-                  border: "1px solid #d1d5db",
+                  borderRadius: "7px",
+                  border: "1.5px solid #d1d5db",
                   boxSizing: "border-box",
-                  fontSize: "14px",
+                  fontSize: "13.5px",
                 }}
               >
-                <option value="Medical / Sick Leave">Medical / Sick Leave</option>
-                <option value="Placement Drive OD">Placement Drive OD (Campus Recruitment)</option>
-                <option value="College Sports OD">College Sports OD (Inter-College Tournament)</option>
-                <option value="Technical Symposium OD">Technical Symposium / Hackathon OD</option>
-                <option value="Emergency Personal Leave">Emergency Personal Leave</option>
+                <option value="Medical / Sick Leave">🏥 Medical / Sick Leave (Doctor Certificate Attached)</option>
+                <option value="Placement Drive OD">💼 Campus Placement / Interview Drive OD</option>
+                <option value="College Sports OD">🏆 University / College Sports Tournament OD</option>
+                <option value="Technical Symposium OD">💻 Technical Symposium / Hackathon OD</option>
+                <option value="Official Institutional Certificate">📜 Official Institutional Certificate Exemption</option>
+                <option value="Emergency Personal Leave">⚠️ Emergency Personal Leave</option>
+              </select>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
+              <div>
+                <label style={{ fontSize: "12px", color: "#374151", fontWeight: "700", display: "block", marginBottom: "4px" }}>
+                  Date of Absence <span style={{ color: "#ef4444" }}>*</span>
+                </label>
+                <input
+                  type="date"
+                  value={leaveDate}
+                  onChange={(e) => setLeaveDate(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    borderRadius: "7px",
+                    border: "1.5px solid #d1d5db",
+                    boxSizing: "border-box",
+                    fontSize: "13.5px",
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: "12px", color: "#374151", fontWeight: "700", display: "block", marginBottom: "4px" }}>
+                  Lecture Timing Slot <span style={{ color: "#ef4444" }}>*</span>
+                </label>
+                <select
+                  value={leaveTimeSlot}
+                  onChange={(e) => setLeaveTimeSlot(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    borderRadius: "7px",
+                    border: "1.5px solid #d1d5db",
+                    boxSizing: "border-box",
+                    fontSize: "13.5px",
+                  }}
+                >
+                  <option value="09:15 AM - 10:15 AM">09:15 AM - 10:15 AM</option>
+                  <option value="10:15 AM - 11:15 AM">10:15 AM - 11:15 AM</option>
+                  <option value="11:30 AM - 12:30 PM">11:30 AM - 12:30 PM</option>
+                  <option value="01:30 PM - 02:30 PM">01:30 PM - 02:30 PM</option>
+                  <option value="02:30 PM - 03:30 PM">02:30 PM - 03:30 PM</option>
+                  <option value="03:30 PM - 04:30 PM">03:30 PM - 04:30 PM</option>
+                  <option value="Full Day (All Lectures)">Full Day (All Lectures)</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: "12px" }}>
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "700", display: "block", marginBottom: "4px" }}>
+                Subject / Course Name <span style={{ color: "#ef4444" }}>*</span>
+              </label>
+              <select
+                value={leaveSubject}
+                onChange={(e) => setLeaveSubject(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  borderRadius: "7px",
+                  border: "1.5px solid #d1d5db",
+                  boxSizing: "border-box",
+                  fontSize: "13.5px",
+                }}
+              >
+                <option value="Machine Learning & Deep Learning">Machine Learning & Deep Learning</option>
+                <option value="Artificial Intelligence & Expert Systems">Artificial Intelligence & Expert Systems</option>
+                <option value="Cloud Computing & DevOps">Cloud Computing & DevOps</option>
+                <option value="Cyber Security & Forensics">Cyber Security & Forensics</option>
+                <option value="Database Management Systems">Database Management Systems</option>
+                <option value="Computer Networks">Computer Networks</option>
+                <option value="Full Day Exemption (All Subjects)">Full Day Exemption (All Subjects)</option>
               </select>
             </div>
 
             <div style={{ marginBottom: "12px" }}>
-              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650", display: "block", marginBottom: "4px" }}>
-                Date of Absence
-              </label>
-              <input
-                type="date"
-                value={leaveDate}
-                onChange={(e) => setLeaveDate(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "9px 12px",
-                  borderRadius: "6px",
-                  border: "1px solid #d1d5db",
-                  boxSizing: "border-box",
-                  fontSize: "14px",
-                }}
-              />
-            </div>
-
-            <div style={{ marginBottom: "12px" }}>
-              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "650", display: "block", marginBottom: "4px" }}>
-                Reason & Details
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "700", display: "block", marginBottom: "4px" }}>
+                Reason & Official Justification <span style={{ color: "#ef4444" }}>*</span>
               </label>
               <textarea
                 rows={3}
-                placeholder="Explain the reason for absence (e.g. Attending TCS placement interview, Medical illness with doctor prescription submitted to department)"
+                placeholder="Detail your reason for absence (e.g. Attending off-campus technical placement round, hospitalized due to viral fever with medical certificate attached below)"
                 value={leaveReason}
                 onChange={(e) => setLeaveReason(e.target.value)}
                 style={{
                   width: "100%",
                   padding: "9px 12px",
-                  borderRadius: "6px",
-                  border: "1px solid #d1d5db",
+                  borderRadius: "7px",
+                  border: "1.5px solid #d1d5db",
                   boxSizing: "border-box",
                   fontFamily: "inherit",
                   fontSize: "13px",
@@ -842,8 +969,128 @@ export default function Profile() {
               />
             </div>
 
+            {/* Document Upload Area (Image or PDF) */}
+            <div style={{ marginBottom: "14px" }}>
+              <label style={{ fontSize: "12px", color: "#374151", fontWeight: "700", display: "block", marginBottom: "4px" }}>
+                📎 Attach Certificate / Medical Letter (Image or PDF)
+              </label>
+              <div
+                style={{
+                  border: "2px dashed #94a3b8",
+                  borderRadius: "8px",
+                  padding: "14px",
+                  textAlign: "center",
+                  background: "#f8fafc",
+                  cursor: "pointer",
+                  position: "relative",
+                }}
+              >
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={handleLeaveFileChange}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    opacity: 0,
+                    cursor: "pointer",
+                    width: "100%",
+                    height: "100%",
+                  }}
+                />
+                {!leaveDocument ? (
+                  <div>
+                    <div style={{ fontSize: "24px", marginBottom: "4px" }}>📄 / 🖼️</div>
+                    <div style={{ fontSize: "13px", fontWeight: "700", color: "#1e293b" }}>
+                      Click or Drag & Drop to Attach Letter / Certificate
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                      Supports Image (.png, .jpg, .jpeg, .webp) & PDF documents (Up to 12MB)
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", textAlign: "left" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      {leaveDocPreview ? (
+                        <img
+                          src={leaveDocPreview}
+                          alt="Document Preview"
+                          style={{ width: "44px", height: "44px", objectFit: "cover", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: "44px",
+                            height: "44px",
+                            borderRadius: "6px",
+                            background: "#fee2e2",
+                            color: "#b91c1c",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: "20px",
+                            fontWeight: "800",
+                          }}
+                        >
+                          PDF
+                        </div>
+                      )}
+                      <div>
+                        <div style={{ fontSize: "13px", fontWeight: "750", color: "#0f172a" }}>
+                          {leaveDocument.name}
+                        </div>
+                        <div style={{ fontSize: "11px", color: "#64748b" }}>
+                          {(leaveDocument.sizeBytes / 1024).toFixed(1)} KB • {leaveDocument.type}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setLeaveDocument(null);
+                        setLeaveDocPreview(null);
+                      }}
+                      style={{
+                        padding: "4px 8px",
+                        background: "#fee2e2",
+                        color: "#ef4444",
+                        border: "none",
+                        borderRadius: "5px",
+                        fontSize: "12px",
+                        cursor: "pointer",
+                        fontWeight: "700",
+                        position: "relative",
+                        zIndex: 2,
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+              </div>
+              {leaveDocError && (
+                <div style={{ color: "#ef4444", fontSize: "12px", marginTop: "4px", fontWeight: "600" }}>
+                  {leaveDocError}
+                </div>
+              )}
+            </div>
+
             {leaveMsg && (
-              <p style={{ margin: "8px 0", fontSize: "13px", fontWeight: "650" }}>{leaveMsg}</p>
+              <p
+                style={{
+                  margin: "10px 0",
+                  padding: "10px",
+                  borderRadius: "6px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  background: leaveMsg.startsWith("✅") ? "#f0fdf4" : "#fef2f2",
+                  color: leaveMsg.startsWith("✅") ? "#166534" : "#991b1b",
+                  border: `1px solid ${leaveMsg.startsWith("✅") ? "#bbf7d0" : "#fecaca"}`,
+                }}
+              >
+                {leaveMsg}
+              </p>
             )}
 
             <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
@@ -853,28 +1100,30 @@ export default function Profile() {
                 disabled={submittingLeave}
                 style={{
                   flex: 1,
-                  background: "#0284c7",
+                  background: "linear-gradient(135deg, #0284c7, #0369a1)",
                   color: "#ffffff",
                   border: "none",
-                  borderRadius: "7px",
-                  padding: "10px",
-                  fontWeight: "750",
+                  borderRadius: "8px",
+                  padding: "12px",
+                  fontWeight: "800",
+                  fontSize: "14px",
                   cursor: "pointer",
+                  boxShadow: "0 4px 12px rgba(2,132,199,0.3)",
                 }}
               >
-                {submittingLeave ? "Submitting..." : "Submit to Faculty"}
+                {submittingLeave ? "⏳ Uploading & Submitting..." : "📤 Submit for Admin Verification"}
               </button>
               <button
                 type="button"
                 onClick={() => setShowLeaveModal(false)}
                 style={{
-                  flex: 1,
-                  background: "#f3f4f6",
-                  color: "#374151",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "7px",
-                  padding: "10px",
+                  padding: "12px 18px",
+                  background: "#f1f5f9",
+                  color: "#475569",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: "8px",
                   fontWeight: "700",
+                  fontSize: "13.5px",
                   cursor: "pointer",
                 }}
               >

@@ -658,7 +658,7 @@ export async function verifySessionQR(
   };
 }
 
-import { dispatchAttendanceEmailNotification } from "./emailService";
+import { dispatchAttendanceEmailNotification, dispatchLeaveDecisionEmailNotification } from "./emailService";
 
 export async function markAttendanceForStudent(
   sessionId: string,
@@ -776,39 +776,320 @@ export async function markAttendanceForStudent(
   };
 }
 
+export interface StudentLeaveApplicationPayload {
+  prn: string;
+  leave_type: string;
+  leave_date: string; // YYYY-MM-DD
+  subject?: string;
+  lecture_time?: string;
+  reason: string;
+  document?: {
+    name: string;
+    type: string; // "image/png" | "image/jpeg" | "application/pdf"
+    base64: string;
+    sizeBytes?: number;
+  } | null;
+}
+
+export interface StudentLeaveApplicationRecord {
+  id: number;
+  session_id: string;
+  prn: string;
+  student_name: string;
+  student_email: string;
+  subject: string;
+  department: string;
+  year: string;
+  lecture_date: string;
+  lecture_time: string;
+  teacher_name: string;
+  status: string; // "Pending" | "Approved" | "Rejected"
+  notification_type: string;
+  email_subject: string;
+  email_content: string;
+  created_at: string;
+  parsed_details?: {
+    reason: string;
+    leave_type: string;
+    subject: string;
+    lecture_date: string;
+    lecture_time: string;
+    document_name: string | null;
+    document_type: string | null;
+    document_data: string | null;
+    document_size: number;
+    submitted_at: string;
+  };
+}
+
+/**
+ * 📝 Submit student leave / duty exemption or official certificate with image/PDF attachment
+ * Stored under student's PRN, name, and registered email in Supabase
+ */
+export async function submitStudentLeaveWithDocument(payload: StudentLeaveApplicationPayload) {
+  const cleanPrn = (payload.prn || "").trim();
+  if (!cleanPrn) throw new Error("Student PRN is required.");
+  if (!payload.leave_date) throw new Error("Date of absence is required.");
+  if (!payload.reason || !payload.reason.trim()) throw new Error("Reason for leave/certificate is required.");
+
+  const students = await supabaseQuery(`students?prn=eq.${encodeURIComponent(cleanPrn)}&limit=1`);
+  if (!students || students.length === 0) {
+    throw new Error(`Student with PRN ${cleanPrn} was not found in the student database.`);
+  }
+  const student = students[0];
+
+  const subName = (payload.subject || "Full Day / All Lectures").trim();
+  const timeSlot = (payload.lecture_time || "All Scheduled Lectures").trim();
+  const cat = (payload.leave_type || "Medical / Sick Leave").trim();
+  const sessionId = `LEAVE_REQ_${cleanPrn}_${Date.now()}`;
+  const nowIso = new Date().toISOString();
+
+  // Document metadata + base64 data
+  const docMeta = {
+    reason: payload.reason.trim(),
+    leave_type: cat,
+    subject: subName,
+    lecture_date: payload.leave_date,
+    lecture_time: timeSlot,
+    document_name: payload.document?.name || null,
+    document_type: payload.document?.type || null,
+    document_data: payload.document?.base64 || null,
+    document_size: payload.document?.sizeBytes || 0,
+    submitted_at: nowIso,
+  };
+
+  // 1. Store the official submission record in attendance_notifications
+  await supabaseQuery("attendance_notifications", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      session_id: sessionId,
+      prn: cleanPrn,
+      student_name: student.full_name,
+      student_email: student.email,
+      subject: subName,
+      department: student.branch || "AIML",
+      year: student.year || "TY",
+      lecture_date: payload.leave_date,
+      lecture_time: timeSlot,
+      teacher_name: "Admin Verification Desk",
+      status: "Pending",
+      notification_type: "Leave / Certificate Application",
+      email_subject: `📑 [Pending Review] ${cat} - ${student.full_name} (${cleanPrn})`,
+      email_content: JSON.stringify(docMeta),
+    }),
+  });
+
+  // 2. Also register initial record in attendance table
+  try {
+    await supabaseQuery("attendance", {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        teacher_id: "ADMIN",
+        student_name: student.full_name,
+        teacher_name: "College Administration",
+        prn: cleanPrn,
+        subject: subName,
+        department: student.branch || "AIML",
+        year: student.year || "TY",
+        attendance_date: payload.leave_date,
+        attendance_time: nowIso,
+        status: "Leave",
+        leave_type: cat,
+        leave_comment: payload.reason.trim(),
+        leave_verified: 0,
+      }),
+    });
+  } catch (attErr) {
+    console.debug("Attendance initial record created/handled:", attErr);
+  }
+
+  return {
+    success: true,
+    message: "✅ Official leave application & certificate uploaded successfully for Admin verification!",
+    session_id: sessionId,
+  };
+}
+
+/**
+ * Backwards compatibility wrapper for applyStudentLeave
+ */
 export async function applyStudentLeave(params: {
   prn: string;
   leave_type: string;
   leave_date: string;
   reason: string;
+  subject?: string;
+  lecture_time?: string;
+  document?: {
+    name: string;
+    type: string;
+    base64: string;
+    sizeBytes?: number;
+  } | null;
 }) {
-  const students = await supabaseQuery(`students?prn=eq.${encodeURIComponent(params.prn)}&limit=1`);
-  if (!students || students.length === 0) {
-    throw new Error("Student not found.");
-  }
-  const student = students[0];
+  return submitStudentLeaveWithDocument(params);
+}
 
-  const payload = {
-    session_id: `LEAVE_${params.prn}_${Date.now()}`,
-    prn: params.prn,
-    student_name: student.full_name,
-    department: student.branch,
-    year: student.year,
-    subject: "Leave / Duty Exemption",
-    attendance_date: params.leave_date,
-    attendance_time: new Date().toISOString(),
-    status: "Leave",
-    leave_type: params.leave_type,
-    leave_comment: params.reason,
-    leave_verified: 0,
-  };
+/**
+ * 📥 Admin: Fetch all submitted student leave and certificate applications
+ */
+export async function getStudentLeaveApplications(): Promise<StudentLeaveApplicationRecord[]> {
+  const data = await supabaseQuery(
+    "attendance_notifications?notification_type=eq.Leave%20%2F%20Certificate%20Application&order=created_at.desc"
+  );
+  if (!data || !Array.isArray(data)) return [];
 
-  await supabaseQuery("attendance", {
-    method: "POST",
-    body: JSON.stringify(payload),
+  return data.map((item: any) => {
+    let parsed: any = null;
+    try {
+      if (item.email_content && item.email_content.startsWith("{")) {
+        parsed = JSON.parse(item.email_content);
+      }
+    } catch {}
+
+    return {
+      ...item,
+      parsed_details: parsed || {
+        reason: item.email_content || "",
+        leave_type: item.subject || "Leave / Exemption",
+        subject: item.subject,
+        lecture_date: item.lecture_date,
+        lecture_time: item.lecture_time,
+        document_name: null,
+        document_type: null,
+        document_data: null,
+        document_size: 0,
+        submitted_at: item.created_at,
+      },
+    };
+  });
+}
+
+/**
+ * ⚖️ Admin: Accept & Mark Present or Reject & Mark Absent
+ * Updates attendance database, updates status, and sends student confirmation/rejection email
+ */
+export async function updateLeaveApplicationDecision(params: {
+  applicationId: number;
+  sessionId: string;
+  prn: string;
+  studentName: string;
+  studentEmail: string;
+  subject: string;
+  department: string;
+  year: string;
+  lectureDate: string;
+  lectureTime?: string;
+  decision: "Approved" | "Rejected";
+  adminName?: string;
+  leaveType?: string;
+  reason?: string;
+}) {
+  const isApproved = params.decision === "Approved";
+  const newStatus = isApproved ? "Approved" : "Rejected";
+  const attendanceStatus = isApproved ? "Present" : "Absent";
+  const verifiedCode = isApproved ? 1 : -1;
+  const adminLabel = params.adminName || "Admin (admin@ritindia.edu)";
+  const nowIso = new Date().toISOString();
+
+  // 1. Update status in attendance_notifications
+  await supabaseQuery(`attendance_notifications?id=eq.${params.applicationId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      status: newStatus,
+      teacher_name: adminLabel,
+    }),
   });
 
-  return { success: true, message: "Leave application submitted to faculty for verification!" };
+  // 2. Update attendance record
+  // Check if existing record exists by session_id
+  const existingAtt = await supabaseQuery(
+    `attendance?session_id=eq.${encodeURIComponent(params.sessionId)}&limit=1`
+  );
+
+  if (existingAtt && existingAtt.length > 0) {
+    await supabaseQuery(`attendance?session_id=eq.${encodeURIComponent(params.sessionId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: attendanceStatus,
+        leave_verified: verifiedCode,
+        leave_marked_by: adminLabel,
+        leave_marked_at: nowIso,
+      }),
+    });
+  } else {
+    // Check if an attendance record for this student and date already exists
+    const byDateSub = await supabaseQuery(
+      `attendance?prn=eq.${encodeURIComponent(params.prn)}&attendance_date=eq.${encodeURIComponent(
+        params.lectureDate
+      )}&limit=1`
+    );
+
+    if (byDateSub && byDateSub.length > 0) {
+      await supabaseQuery(`attendance?attendance_id=eq.${byDateSub[0].attendance_id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: attendanceStatus,
+          leave_verified: verifiedCode,
+          leave_marked_by: adminLabel,
+          leave_marked_at: nowIso,
+        }),
+      });
+    } else {
+      // Create new record
+      await supabaseQuery("attendance", {
+        method: "POST",
+        body: JSON.stringify({
+          session_id: params.sessionId,
+          teacher_id: "ADMIN",
+          student_name: params.studentName,
+          teacher_name: adminLabel,
+          prn: params.prn,
+          subject: params.subject,
+          department: params.department,
+          year: params.year,
+          attendance_date: params.lectureDate,
+          attendance_time: nowIso,
+          status: attendanceStatus,
+          leave_type: params.leaveType || "Leave / Certificate",
+          leave_comment: params.reason || `Official Verification Decision: ${params.decision}`,
+          leave_verified: verifiedCode,
+          leave_marked_by: adminLabel,
+          leave_marked_at: nowIso,
+        }),
+      });
+    }
+  }
+
+  // 3. Dispatch official email confirmation to student
+  try {
+    await dispatchLeaveDecisionEmailNotification({
+      studentEmail: params.studentEmail,
+      studentName: params.studentName,
+      prn: params.prn,
+      subject: params.subject,
+      lectureDate: params.lectureDate,
+      lectureTime: params.lectureTime,
+      decision: params.decision,
+      adminName: adminLabel,
+      leaveType: params.leaveType,
+      reason: params.reason,
+    });
+  } catch (emailErr) {
+    console.debug("Decision email notification dispatch non-blocking error:", emailErr);
+  }
+
+  return {
+    success: true,
+    decision: params.decision,
+    attendanceStatus: attendanceStatus,
+    message: isApproved
+      ? `✅ Certificate verified and accepted! Marked ${params.studentName} as PRESENT for ${params.subject} on ${params.lectureDate}.`
+      : `❌ Application rejected. Marked ${params.studentName} as ABSENT for ${params.subject} on ${params.lectureDate}.`,
+  };
 }
 
 export async function getStudentAttendanceHistory(prn: string) {

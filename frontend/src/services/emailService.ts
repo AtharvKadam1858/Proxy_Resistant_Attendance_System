@@ -463,3 +463,103 @@ export async function sendPasswordResetOtpEmail(
 
   return { success: true, message: `6-Digit OTP successfully dispatched to ${cleanEmail}` };
 }
+
+/**
+ * 📨 Dispatches an official decision notification email (Approved / Rejected) to the student
+ */
+export async function dispatchLeaveDecisionEmailNotification(payload: {
+  studentEmail: string;
+  studentName: string;
+  prn: string;
+  subject: string;
+  lectureDate: string;
+  lectureTime?: string;
+  decision: "Approved" | "Rejected";
+  adminName?: string;
+  leaveType?: string;
+  reason?: string;
+}) {
+  const cleanEmail = (payload.studentEmail || "").trim().toLowerCase();
+  if (!cleanEmail) return { success: false, message: "No recipient email provided" };
+
+  const isApproved = payload.decision === "Approved";
+  const statusEmoji = isApproved ? "✅" : "❌";
+  const statusText = isApproved ? "APPROVED (Marked PRESENT)" : "REJECTED (Marked ABSENT)";
+  const subject = `${statusEmoji} Official Leave Application ${payload.decision.toUpperCase()}: ${payload.subject} (${payload.lectureDate})`;
+  const verifier = payload.adminName || "College Administration";
+
+  const messageText = `
+Rajarambapu Institute of Technology, Rajaramnagar
+Official Student Attendance & Academic Affairs Division
+
+Dear ${payload.studentName} (PRN: ${payload.prn}),
+
+Your submitted Leave / Official Certificate application has been formally reviewed:
+
+- Subject: ${payload.subject}
+- Date of Absence: ${payload.lectureDate}
+- Lecture Timing: ${payload.lectureTime || "Scheduled Lecture Time"}
+- Application Category: ${payload.leaveType || "Leave / Exemption Certificate"}
+- Verification Status: ${statusText}
+- Verified By: ${verifier}
+- Verification Date: ${new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+
+${
+  isApproved
+    ? "🎉 CONGRATULATIONS: Your certificate has been verified and validated. Your attendance for this lecture has been recorded as 'PRESENT' in the institutional attendance database, contributing directly to your minimum 75% attendance criteria."
+    : "⚠️ NOTICE: Your leave request has been marked as 'ABSENT' upon administrative review. If you have inquiries, please consult the Academic Office or your Department Head."
+}
+
+Best regards,
+Office of Academic Affairs & Attendance Monitoring
+Rajarambapu Institute of Technology (RIT)
+  `.trim();
+
+  try {
+    fetch("https://api.web3forms.com/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        access_key: "c53d1fb5-bc6d-4763-8a3d-4c3127ef64db",
+        subject: subject,
+        from_name: "RIT Academic Affairs & Attendance Office",
+        to_email: cleanEmail,
+        message: messageText,
+      }),
+    })
+      .then((res) => {
+        if (!res.ok) {
+          fetch("https://formsubmit.co/ajax/" + encodeURIComponent(cleanEmail), {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+              _subject: subject,
+              status: payload.decision,
+              student: payload.studentName,
+              prn: payload.prn,
+              subject: payload.subject,
+              message: messageText,
+            }),
+          }).catch(() => {});
+        }
+      })
+      .catch(() => {
+        fetch("https://formsubmit.co/ajax/" + encodeURIComponent(cleanEmail), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({
+            _subject: subject,
+            status: payload.decision,
+            student: payload.studentName,
+            prn: payload.prn,
+            subject: payload.subject,
+            message: messageText,
+          }),
+        }).catch(() => {});
+      });
+  } catch (err) {
+    console.debug("Leave decision email dispatch notice:", err);
+  }
+
+  return { success: true, message: `Notification sent to ${cleanEmail}` };
+}

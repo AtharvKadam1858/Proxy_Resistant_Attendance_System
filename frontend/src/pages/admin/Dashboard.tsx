@@ -12,7 +12,19 @@ import {
 } from "firebase/app";
 
 import { API_URL } from "../../config";
-import { getStudentsList, addNewStudent, updateUserPassword, updateStudentByAdmin, deleteStudentByAdmin, getTeachersList, addNewTeacher, deleteTeacherByAdmin } from "../../services/supabase";
+import {
+  getStudentsList,
+  addNewStudent,
+  updateUserPassword,
+  updateStudentByAdmin,
+  deleteStudentByAdmin,
+  getTeachersList,
+  addNewTeacher,
+  deleteTeacherByAdmin,
+  getStudentLeaveApplications,
+  updateLeaveApplicationDecision,
+  type StudentLeaveApplicationRecord,
+} from "../../services/supabase";
 import ritLogo from "../../assets/RIT_logo.jpeg";
 
 const firebaseConfig = {
@@ -114,10 +126,68 @@ export default function AdminDashboard() {
   const [studentsLoading, setStudentsLoading] =
     useState(false);
 
-  // 🎓 Admin Navigation Tabs (Tab 1: Student Directory, Tab 2: Enroll Students, Tab 3: Faculty Management)
-  const [adminTab, setAdminTab] = useState<"directory" | "enroll" | "faculty">("directory");
+  // 🎓 Admin Navigation Tabs (Tab 1: Student Directory, Tab 2: Enroll Students, Tab 3: Faculty Management, Tab 4: Leaves & Certificates)
+  const [adminTab, setAdminTab] = useState<"directory" | "enroll" | "faculty" | "leaves">("directory");
   const [selectedDivision, setSelectedDivision] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // 📑 Leave & Certificate Verification Desk State
+  const [leaveApplications, setLeaveApplications] = useState<StudentLeaveApplicationRecord[]>([]);
+  const [leavesLoading, setLeavesLoading] = useState(false);
+  const [selectedLeaveApp, setSelectedLeaveApp] = useState<StudentLeaveApplicationRecord | null>(null);
+  const [leaveFilterStatus, setLeaveFilterStatus] = useState<"All" | "Pending" | "Approved" | "Rejected">("All");
+  const [leaveSearchQuery, setLeaveSearchQuery] = useState("");
+  const [decisionLoading, setDecisionLoading] = useState(false);
+  const [decisionMsg, setDecisionMsg] = useState("");
+
+  const fetchLeaveApplications = async () => {
+    try {
+      setLeavesLoading(true);
+      const apps = await getStudentLeaveApplications();
+      setLeaveApplications(apps || []);
+    } catch (err: any) {
+      console.error("Failed to load leave applications:", err);
+    } finally {
+      setLeavesLoading(false);
+    }
+  };
+
+  const handleLeaveDecision = async (decision: "Approved" | "Rejected") => {
+    if (!selectedLeaveApp) return;
+    try {
+      setDecisionLoading(true);
+      setDecisionMsg("");
+      const details = selectedLeaveApp.parsed_details;
+      const res = await updateLeaveApplicationDecision({
+        applicationId: selectedLeaveApp.id,
+        sessionId: selectedLeaveApp.session_id,
+        prn: selectedLeaveApp.prn,
+        studentName: selectedLeaveApp.student_name,
+        studentEmail: selectedLeaveApp.student_email,
+        subject: details?.subject || selectedLeaveApp.subject,
+        department: selectedLeaveApp.department,
+        year: selectedLeaveApp.year,
+        lectureDate: details?.lecture_date || selectedLeaveApp.lecture_date,
+        lectureTime: details?.lecture_time || selectedLeaveApp.lecture_time,
+        decision: decision,
+        adminName: "Admin (admin@ritindia.edu)",
+        leaveType: details?.leave_type,
+        reason: details?.reason,
+      });
+
+      setDecisionMsg(res.message);
+      const updatedList = await getStudentLeaveApplications();
+      setLeaveApplications(updatedList || []);
+      const updatedCurrent = (updatedList || []).find((a) => a.id === selectedLeaveApp.id);
+      if (updatedCurrent) {
+        setSelectedLeaveApp(updatedCurrent);
+      }
+    } catch (e: any) {
+      setDecisionMsg("❌ " + (e?.message || "Failed to submit verification decision"));
+    } finally {
+      setDecisionLoading(false);
+    }
+  };
 
   // 👨‍🏫 Faculty / Teachers Management State
   const [teachers, setTeachers] = useState<any[]>([]);
@@ -356,11 +426,13 @@ export default function AdminDashboard() {
     // Initial fetch in case of Supabase login or direct session
     fetchStudents(selectedYear, selectedDepartment);
     fetchTeachers();
+    fetchLeaveApplications();
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         fetchStudents(selectedYear, selectedDepartment);
         fetchTeachers();
+        fetchLeaveApplications();
       }
     });
 
@@ -859,6 +931,47 @@ export default function AdminDashboard() {
             >
               <span>👨‍🏫</span> Faculty / Teacher Management
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAdminTab("leaves");
+                fetchLeaveApplications();
+              }}
+              style={{
+                flex: 1,
+                padding: "12px 18px",
+                borderRadius: "9px",
+                border: "none",
+                fontSize: "14px",
+                fontWeight: "800",
+                cursor: "pointer",
+                transition: "all 0.25s ease",
+                background: adminTab === "leaves" ? "#ffca08" : "transparent",
+                color: adminTab === "leaves" ? "#000000" : "#64748b",
+                boxShadow: adminTab === "leaves" ? "0 4px 12px rgba(255,202,8,0.35)" : "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+              }}
+            >
+              <span>📑</span> Leave & Certificate Verification
+              {leaveApplications.filter((a) => a.status === "Pending").length > 0 && (
+                <span
+                  style={{
+                    background: "#ef4444",
+                    color: "#ffffff",
+                    fontSize: "11px",
+                    fontWeight: "900",
+                    padding: "2px 7px",
+                    borderRadius: "10px",
+                  }}
+                >
+                  {leaveApplications.filter((a) => a.status === "Pending").length}
+                </span>
+              )}
+            </button>
           </div>
 
           {/* ========================================================================= */}
@@ -1243,6 +1356,391 @@ export default function AdminDashboard() {
                   </table>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 4: STUDENT LEAVE & OFFICIAL CERTIFICATE VERIFICATION DESK             */}
+          {/* ========================================================================= */}
+          {adminTab === "leaves" && (
+            <div>
+              <div className="admin-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: "20px", fontWeight: "800", color: "#1e293b" }}>
+                    📑 Student Leave & Official Certificate Verification Desk
+                  </h2>
+                  <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}>
+                    Review student medical letters, duty exemptions (OD), and sports certificates. Click on any student's PRN to inspect their attached letter/PDF and mark attendance.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={fetchLeaveApplications}
+                  disabled={leavesLoading}
+                  style={{
+                    padding: "9px 18px",
+                    background: "#0284c7",
+                    color: "#ffffff",
+                    border: "none",
+                    borderRadius: "8px",
+                    fontWeight: "750",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    boxShadow: "0 2px 8px rgba(2,132,199,0.35)",
+                  }}
+                >
+                  <span>🔄</span> {leavesLoading ? "Refreshing..." : "Refresh Applications"}
+                </button>
+              </div>
+
+              {/* Analytics Metric Cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "14px", margin: "18px 0" }}>
+                <div style={{ background: "#ffffff", borderRadius: "10px", padding: "14px 18px", border: "1.5px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontSize: "12px", fontWeight: "700", color: "#64748b", textTransform: "uppercase" }}>Total Requests</div>
+                  <div style={{ fontSize: "26px", fontWeight: "900", color: "#1e293b", marginTop: "4px" }}>
+                    {leaveApplications.length}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>All submitted leave & OD records</div>
+                </div>
+
+                <div style={{ background: "#fffbeb", borderRadius: "10px", padding: "14px 18px", border: "1.5px solid #fde68a", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontSize: "12px", fontWeight: "700", color: "#b45309", textTransform: "uppercase" }}>⏳ Pending Review</div>
+                  <div style={{ fontSize: "26px", fontWeight: "900", color: "#d97706", marginTop: "4px" }}>
+                    {leaveApplications.filter((a) => a.status === "Pending").length}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#b45309", marginTop: "2px" }}>Awaiting Admin attendance verification</div>
+                </div>
+
+                <div style={{ background: "#f0fdf4", borderRadius: "10px", padding: "14px 18px", border: "1.5px solid #bbf7d0", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontSize: "12px", fontWeight: "700", color: "#15803d", textTransform: "uppercase" }}>✅ Accepted (Present)</div>
+                  <div style={{ fontSize: "26px", fontWeight: "900", color: "#16a34a", marginTop: "4px" }}>
+                    {leaveApplications.filter((a) => a.status === "Approved").length}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#15803d", marginTop: "2px" }}>Marked PRESENT in attendance database</div>
+                </div>
+
+                <div style={{ background: "#fef2f2", borderRadius: "10px", padding: "14px 18px", border: "1.5px solid #fecaca", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontSize: "12px", fontWeight: "700", color: "#b91c1c", textTransform: "uppercase" }}>❌ Rejected (Absent)</div>
+                  <div style={{ fontSize: "26px", fontWeight: "900", color: "#dc2626", marginTop: "4px" }}>
+                    {leaveApplications.filter((a) => a.status === "Rejected").length}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#b91c1c", marginTop: "2px" }}>Marked ABSENT in defaulter list</div>
+                </div>
+              </div>
+
+              {/* Filter & Search Bar */}
+              <div style={{ background: "#ffffff", borderRadius: "12px", padding: "16px", border: "1.5px solid #e2e8f0", marginBottom: "18px" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ flex: "1 1 320px" }}>
+                    <input
+                      type="text"
+                      placeholder="🔍 Search by Student PRN, Full Name, Course Subject, or Reason..."
+                      value={leaveSearchQuery}
+                      onChange={(e) => setLeaveSearchQuery(e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px",
+                        borderRadius: "8px",
+                        border: "1.5px solid #cbd5e1",
+                        fontSize: "13.5px",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    {(["All", "Pending", "Approved", "Rejected"] as const).map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setLeaveFilterStatus(st)}
+                        style={{
+                          padding: "8px 14px",
+                          borderRadius: "7px",
+                          border: leaveFilterStatus === st ? "1.5px solid #0284c7" : "1px solid #cbd5e1",
+                          background: leaveFilterStatus === st ? "#0284c7" : "#f8fafc",
+                          color: leaveFilterStatus === st ? "#ffffff" : "#475569",
+                          fontSize: "12.5px",
+                          fontWeight: "750",
+                          cursor: "pointer",
+                          transition: "all 0.2s ease",
+                        }}
+                      >
+                        {st === "All" && `All (${leaveApplications.length})`}
+                        {st === "Pending" && `⏳ Pending (${leaveApplications.filter((a) => a.status === "Pending").length})`}
+                        {st === "Approved" && `✅ Approved (${leaveApplications.filter((a) => a.status === "Approved").length})`}
+                        {st === "Rejected" && `❌ Rejected (${leaveApplications.filter((a) => a.status === "Rejected").length})`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Leave Applications Table */}
+              <div style={{ background: "#ffffff", borderRadius: "12px", border: "1.5px solid #e2e8f0", overflow: "hidden" }}>
+                <div style={{ padding: "14px 18px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <h3 style={{ margin: 0, fontSize: "14.5px", fontWeight: "800", color: "#1e293b" }}>
+                    📋 Submitted Applications ({leaveApplications.filter((app) => {
+                      if (leaveFilterStatus !== "All" && app.status !== leaveFilterStatus) return false;
+                      if (!leaveSearchQuery.trim()) return true;
+                      const q = leaveSearchQuery.toLowerCase();
+                      return (
+                        app.prn?.toLowerCase().includes(q) ||
+                        app.student_name?.toLowerCase().includes(q) ||
+                        app.student_email?.toLowerCase().includes(q) ||
+                        app.subject?.toLowerCase().includes(q) ||
+                        app.parsed_details?.reason?.toLowerCase().includes(q)
+                      );
+                    }).length} Matching Records)
+                  </h3>
+                  <span style={{ fontSize: "12px", color: "#64748b" }}>
+                    Tip: Click on any <b>PRN</b> to view the uploaded letter/PDF
+                  </span>
+                </div>
+
+                {leavesLoading ? (
+                  <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>
+                    <div style={{ fontSize: "28px", marginBottom: "8px" }}>⏳</div>
+                    <div>Loading student leave & certificate submissions...</div>
+                  </div>
+                ) : leaveApplications.filter((app) => {
+                    if (leaveFilterStatus !== "All" && app.status !== leaveFilterStatus) return false;
+                    if (!leaveSearchQuery.trim()) return true;
+                    const q = leaveSearchQuery.toLowerCase();
+                    return (
+                      app.prn?.toLowerCase().includes(q) ||
+                      app.student_name?.toLowerCase().includes(q) ||
+                      app.student_email?.toLowerCase().includes(q) ||
+                      app.subject?.toLowerCase().includes(q) ||
+                      app.parsed_details?.reason?.toLowerCase().includes(q)
+                    );
+                  }).length === 0 ? (
+                  <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>
+                    <div style={{ fontSize: "28px", marginBottom: "8px" }}>📭</div>
+                    <div style={{ fontWeight: "700", color: "#334155" }}>No leave or certificate records found</div>
+                    <div style={{ fontSize: "12px", marginTop: "4px" }}>
+                      {leaveFilterStatus !== "All"
+                        ? `No applications with status "${leaveFilterStatus}".`
+                        : "No students have submitted leave or certificate requests yet."}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc", borderBottom: "1.5px solid #e2e8f0", textAlign: "left" }}>
+                          <th style={{ padding: "12px 14px", fontWeight: "800", color: "#334155" }}>Student PRN</th>
+                          <th style={{ padding: "12px 14px", fontWeight: "800", color: "#334155" }}>Candidate Name & Email</th>
+                          <th style={{ padding: "12px 14px", fontWeight: "800", color: "#334155" }}>Class / Dept</th>
+                          <th style={{ padding: "12px 14px", fontWeight: "800", color: "#334155" }}>Course Subject & Timing</th>
+                          <th style={{ padding: "12px 14px", fontWeight: "800", color: "#334155" }}>Absence Date</th>
+                          <th style={{ padding: "12px 14px", fontWeight: "800", color: "#334155" }}>Category</th>
+                          <th style={{ padding: "12px 14px", fontWeight: "800", color: "#334155" }}>Attachment</th>
+                          <th style={{ padding: "12px 14px", fontWeight: "800", color: "#334155" }}>Status</th>
+                          <th style={{ padding: "12px 14px", fontWeight: "800", color: "#334155", textAlign: "center" }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {leaveApplications
+                          .filter((app) => {
+                            if (leaveFilterStatus !== "All" && app.status !== leaveFilterStatus) return false;
+                            if (!leaveSearchQuery.trim()) return true;
+                            const q = leaveSearchQuery.toLowerCase();
+                            return (
+                              app.prn?.toLowerCase().includes(q) ||
+                              app.student_name?.toLowerCase().includes(q) ||
+                              app.student_email?.toLowerCase().includes(q) ||
+                              app.subject?.toLowerCase().includes(q) ||
+                              app.parsed_details?.reason?.toLowerCase().includes(q)
+                            );
+                          })
+                          .map((app) => {
+                            const details = app.parsed_details;
+                            const hasDoc = Boolean(details?.document_data);
+                            const isPdf = details?.document_type?.includes("pdf") || details?.document_name?.toLowerCase().endsWith(".pdf");
+
+                            return (
+                              <tr
+                                key={app.id}
+                                style={{
+                                  borderBottom: "1px solid #f1f5f9",
+                                  transition: "background 0.15s ease",
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f8fafc")}
+                                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                              >
+                                {/* PRN CLICKABLE BUTTON */}
+                                <td style={{ padding: "12px 14px" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedLeaveApp(app);
+                                      setDecisionMsg("");
+                                    }}
+                                    title="Click to inspect student's attached letter/PDF and mark attendance"
+                                    style={{
+                                      background: "#fef3c7",
+                                      color: "#b45309",
+                                      border: "1.5px solid #fcd34d",
+                                      padding: "6px 11px",
+                                      borderRadius: "6px",
+                                      fontWeight: "800",
+                                      fontSize: "13px",
+                                      cursor: "pointer",
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      gap: "5px",
+                                      boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+                                    }}
+                                  >
+                                    <span>🔍</span> {app.prn}
+                                  </button>
+                                </td>
+
+                                <td style={{ padding: "12px 14px" }}>
+                                  <div style={{ fontWeight: "750", color: "#0f172a" }}>{app.student_name}</div>
+                                  <div style={{ fontSize: "11.5px", color: "#64748b" }}>{app.student_email}</div>
+                                </td>
+
+                                <td style={{ padding: "12px 14px", color: "#475569" }}>
+                                  <span style={{ fontWeight: "700" }}>{app.year || "TY"}</span> • {app.department || "AIML"}
+                                </td>
+
+                                <td style={{ padding: "12px 14px" }}>
+                                  <div style={{ fontWeight: "650", color: "#1e293b" }}>
+                                    {details?.subject || app.subject}
+                                  </div>
+                                  <div style={{ fontSize: "11px", color: "#64748b" }}>
+                                    ⏰ {details?.lecture_time || app.lecture_time || "Full Day"}
+                                  </div>
+                                </td>
+
+                                <td style={{ padding: "12px 14px", fontWeight: "650", color: "#334155" }}>
+                                  {details?.lecture_date || app.lecture_date}
+                                </td>
+
+                                <td style={{ padding: "12px 14px" }}>
+                                  <span
+                                    style={{
+                                      display: "inline-block",
+                                      padding: "3px 9px",
+                                      borderRadius: "6px",
+                                      fontSize: "11.5px",
+                                      fontWeight: "700",
+                                      background: "#eff6ff",
+                                      color: "#1d4ed8",
+                                      border: "1px solid #bfdbfe",
+                                    }}
+                                  >
+                                    {details?.leave_type || "Leave / OD"}
+                                  </span>
+                                </td>
+
+                                <td style={{ padding: "12px 14px" }}>
+                                  {hasDoc ? (
+                                    <span
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "4px",
+                                        padding: "3px 8px",
+                                        borderRadius: "6px",
+                                        fontSize: "11.5px",
+                                        fontWeight: "750",
+                                        background: isPdf ? "#fee2e2" : "#ecfdf5",
+                                        color: isPdf ? "#b91c1c" : "#047857",
+                                        border: `1px solid ${isPdf ? "#fecaca" : "#a7f3d0"}`,
+                                      }}
+                                    >
+                                      {isPdf ? "📄 PDF Document" : "🖼️ Image Document"}
+                                    </span>
+                                  ) : (
+                                    <span style={{ color: "#94a3b8", fontSize: "12px" }}>— Text Only</span>
+                                  )}
+                                </td>
+
+                                <td style={{ padding: "12px 14px" }}>
+                                  {app.status === "Approved" ? (
+                                    <span
+                                      style={{
+                                        display: "inline-block",
+                                        padding: "4px 9px",
+                                        borderRadius: "6px",
+                                        fontSize: "12px",
+                                        fontWeight: "800",
+                                        background: "#dcfce7",
+                                        color: "#15803d",
+                                        border: "1px solid #86efac",
+                                      }}
+                                    >
+                                      ✅ Approved (Present)
+                                    </span>
+                                  ) : app.status === "Rejected" ? (
+                                    <span
+                                      style={{
+                                        display: "inline-block",
+                                        padding: "4px 9px",
+                                        borderRadius: "6px",
+                                        fontSize: "12px",
+                                        fontWeight: "800",
+                                        background: "#fee2e2",
+                                        color: "#b91c1c",
+                                        border: "1px solid #fca5a5",
+                                      }}
+                                    >
+                                      ❌ Rejected (Absent)
+                                    </span>
+                                  ) : (
+                                    <span
+                                      style={{
+                                        display: "inline-block",
+                                        padding: "4px 9px",
+                                        borderRadius: "6px",
+                                        fontSize: "12px",
+                                        fontWeight: "800",
+                                        background: "#fef3c7",
+                                        color: "#b45309",
+                                        border: "1px solid #fde68a",
+                                      }}
+                                    >
+                                      ⏳ Pending Review
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedLeaveApp(app);
+                                      setDecisionMsg("");
+                                    }}
+                                    style={{
+                                      padding: "6px 13px",
+                                      background: "#ffca08",
+                                      color: "#000000",
+                                      border: "none",
+                                      borderRadius: "6px",
+                                      fontSize: "12px",
+                                      fontWeight: "800",
+                                      cursor: "pointer",
+                                      boxShadow: "0 1px 4px rgba(255,202,8,0.4)",
+                                    }}
+                                  >
+                                    👁️ Inspect & Verify
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1850,6 +2348,417 @@ export default function AdminDashboard() {
       )}
 
       {/* Admin Password Change Modal */}
+      {/* ========================================================================= */}
+      {/* 📑 STUDENT LEAVE & CERTIFICATE INSPECTION & ATTENDANCE MARKING MODAL       */}
+      {/* ========================================================================= */}
+      {selectedLeaveApp && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.75)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 99999,
+            padding: "16px",
+            boxSizing: "border-box",
+          }}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "16px",
+              maxWidth: "800px",
+              width: "100%",
+              maxHeight: "94vh",
+              overflowY: "auto",
+              boxShadow: "0 25px 60px rgba(0,0,0,0.35)",
+              boxSizing: "border-box",
+              padding: "24px",
+            }}
+          >
+            {/* Modal Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1.5px solid #e2e8f0", paddingBottom: "14px", marginBottom: "16px" }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "22px" }}>📑</span>
+                  <h2 style={{ margin: 0, fontSize: "19px", fontWeight: "800", color: "#0f172a" }}>
+                    Student Leave & Certificate Verification
+                  </h2>
+                </div>
+                <div style={{ fontSize: "13px", color: "#475569", marginTop: "4px" }}>
+                  Candidate: <b style={{ color: "#0284c7" }}>{selectedLeaveApp.student_name}</b> (PRN: <b style={{ color: "#b45309" }}>{selectedLeaveApp.prn}</b>) • {selectedLeaveApp.year || "TY"} {selectedLeaveApp.department || "AIML"} • {selectedLeaveApp.student_email}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedLeaveApp(null);
+                  setDecisionMsg("");
+                }}
+                style={{
+                  background: "#f1f5f9",
+                  border: "none",
+                  borderRadius: "50%",
+                  width: "34px",
+                  height: "34px",
+                  fontSize: "16px",
+                  cursor: "pointer",
+                  color: "#64748b",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: "800",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Quick Metadata Info Grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "10px", marginBottom: "16px" }}>
+              <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                <div style={{ fontSize: "11px", fontWeight: "750", color: "#64748b", textTransform: "uppercase" }}>📅 Absence Date</div>
+                <div style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", marginTop: "2px" }}>
+                  {selectedLeaveApp.parsed_details?.lecture_date || selectedLeaveApp.lecture_date}
+                </div>
+              </div>
+
+              <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                <div style={{ fontSize: "11px", fontWeight: "750", color: "#64748b", textTransform: "uppercase" }}>⏰ Lecture Slot</div>
+                <div style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", marginTop: "2px" }}>
+                  {selectedLeaveApp.parsed_details?.lecture_time || selectedLeaveApp.lecture_time || "All Lectures"}
+                </div>
+              </div>
+
+              <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                <div style={{ fontSize: "11px", fontWeight: "750", color: "#64748b", textTransform: "uppercase" }}>📚 Subject / Course</div>
+                <div style={{ fontSize: "13.5px", fontWeight: "800", color: "#0284c7", marginTop: "2px" }}>
+                  {selectedLeaveApp.parsed_details?.subject || selectedLeaveApp.subject}
+                </div>
+              </div>
+
+              <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                <div style={{ fontSize: "11px", fontWeight: "750", color: "#64748b", textTransform: "uppercase" }}>🏷️ Leave Category</div>
+                <div style={{ fontSize: "13.5px", fontWeight: "800", color: "#d97706", marginTop: "2px" }}>
+                  {selectedLeaveApp.parsed_details?.leave_type || "Medical / OD"}
+                </div>
+              </div>
+            </div>
+
+            {/* Student's Reason & Justification */}
+            <div style={{ background: "#f1f5f9", borderRadius: "10px", padding: "12px 16px", marginBottom: "18px", border: "1px solid #cbd5e1" }}>
+              <div style={{ fontSize: "12px", fontWeight: "800", color: "#334155", marginBottom: "4px" }}>
+                💬 Candidate's Stated Reason & Explanation:
+              </div>
+              <div style={{ fontSize: "13.5px", color: "#0f172a", lineHeight: "1.5" }}>
+                {selectedLeaveApp.parsed_details?.reason || selectedLeaveApp.email_content || "No explanation provided."}
+              </div>
+            </div>
+
+            {/* ATTACHED DOCUMENT VIEWER (IMAGE OR PDF) */}
+            <div style={{ marginBottom: "20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "800", color: "#1e293b" }}>
+                  📎 Attached Official Certificate / Medical Letter / Proof:
+                </label>
+                {selectedLeaveApp.parsed_details?.document_data && (
+                  <span style={{ fontSize: "12px", color: "#64748b" }}>
+                    File: <b>{selectedLeaveApp.parsed_details.document_name || "Document"}</b> ({((selectedLeaveApp.parsed_details.document_size || 0) / 1024).toFixed(1)} KB)
+                  </span>
+                )}
+              </div>
+
+              {selectedLeaveApp.parsed_details?.document_data ? (
+                <div>
+                  {selectedLeaveApp.parsed_details.document_type?.includes("pdf") ||
+                  selectedLeaveApp.parsed_details.document_name?.toLowerCase().endsWith(".pdf") ? (
+                    <div>
+                      <iframe
+                        src={selectedLeaveApp.parsed_details.document_data}
+                        title="Attached PDF Document Preview"
+                        style={{
+                          width: "100%",
+                          height: "440px",
+                          border: "1.5px solid #cbd5e1",
+                          borderRadius: "8px",
+                          background: "#f8fafc",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
+                        <a
+                          href={selectedLeaveApp.parsed_details.document_data}
+                          download={selectedLeaveApp.parsed_details.document_name || `${selectedLeaveApp.prn}_certificate.pdf`}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "7px 14px",
+                            background: "#fee2e2",
+                            color: "#b91c1c",
+                            border: "1px solid #fecaca",
+                            borderRadius: "6px",
+                            fontSize: "12px",
+                            fontWeight: "750",
+                            textDecoration: "none",
+                          }}
+                        >
+                          📥 Download Attached PDF
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const w = window.open("");
+                            if (w && selectedLeaveApp.parsed_details?.document_data) {
+                              w.document.write(
+                                `<iframe src="${selectedLeaveApp.parsed_details.document_data}" style="border:0; position:fixed; top:0; left:0; width:100%; height:100%;" allowfullscreen></iframe>`
+                              );
+                            }
+                          }}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "7px 14px",
+                            background: "#f1f5f9",
+                            color: "#334155",
+                            border: "1px solid #cbd5e1",
+                            borderRadius: "6px",
+                            fontSize: "12px",
+                            fontWeight: "750",
+                            cursor: "pointer",
+                          }}
+                        >
+                          ↗️ Open Full Screen in New Tab
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div
+                        style={{
+                          border: "1.5px solid #cbd5e1",
+                          borderRadius: "8px",
+                          padding: "10px",
+                          background: "#0f172a",
+                          textAlign: "center",
+                        }}
+                      >
+                        <img
+                          src={selectedLeaveApp.parsed_details.document_data}
+                          alt="Student Certificate / Letter"
+                          style={{
+                            maxWidth: "100%",
+                            maxHeight: "450px",
+                            objectFit: "contain",
+                            borderRadius: "4px",
+                            display: "inline-block",
+                          }}
+                        />
+                      </div>
+                      <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
+                        <a
+                          href={selectedLeaveApp.parsed_details.document_data}
+                          download={selectedLeaveApp.parsed_details.document_name || `${selectedLeaveApp.prn}_certificate.png`}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "7px 14px",
+                            background: "#ecfdf5",
+                            color: "#047857",
+                            border: "1px solid #a7f3d0",
+                            borderRadius: "6px",
+                            fontSize: "12px",
+                            fontWeight: "750",
+                            textDecoration: "none",
+                          }}
+                        >
+                          📥 Download Original Image
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const w = window.open("");
+                            if (w && selectedLeaveApp.parsed_details?.document_data) {
+                              w.document.write(
+                                `<div style="background:#0f172a; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px;"><img src="${selectedLeaveApp.parsed_details.document_data}" style="max-width:100%; max-height:95vh; object-fit:contain;" /></div>`
+                              );
+                            }
+                          }}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "7px 14px",
+                            background: "#f1f5f9",
+                            color: "#334155",
+                            border: "1px solid #cbd5e1",
+                            borderRadius: "6px",
+                            fontSize: "12px",
+                            fontWeight: "750",
+                            cursor: "pointer",
+                          }}
+                        >
+                          ↗️ Open Full Image in New Tab
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ background: "#f8fafc", padding: "24px", borderRadius: "8px", border: "1.5px dashed #cbd5e1", textAlign: "center", color: "#64748b" }}>
+                  <div style={{ fontSize: "28px", marginBottom: "4px" }}>ℹ️</div>
+                  <div style={{ fontWeight: "700", color: "#334155", fontSize: "14px" }}>
+                    No File Attachment Uploaded
+                  </div>
+                  <div style={{ fontSize: "12px", marginTop: "2px" }}>
+                    The candidate submitted a text explanation without attaching an image or PDF. Review using their stated reason above.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Current Decision Pill */}
+            <div style={{ marginBottom: "14px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+              <div style={{ fontSize: "13px", fontWeight: "750", color: "#334155" }}>
+                Current Verification Status:
+              </div>
+              <div>
+                {selectedLeaveApp.status === "Approved" ? (
+                  <span style={{ padding: "5px 12px", borderRadius: "7px", fontSize: "12.5px", fontWeight: "800", background: "#dcfce7", color: "#15803d", border: "1px solid #86efac" }}>
+                    ✅ ACCEPTED & MARKED PRESENT ({selectedLeaveApp.teacher_name || "Admin"})
+                  </span>
+                ) : selectedLeaveApp.status === "Rejected" ? (
+                  <span style={{ padding: "5px 12px", borderRadius: "7px", fontSize: "12.5px", fontWeight: "800", background: "#fee2e2", color: "#b91c1c", border: "1px solid #fca5a5" }}>
+                    ❌ REJECTED & MARKED ABSENT ({selectedLeaveApp.teacher_name || "Admin"})
+                  </span>
+                ) : (
+                  <span style={{ padding: "5px 12px", borderRadius: "7px", fontSize: "12.5px", fontWeight: "800", background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" }}>
+                    ⏳ PENDING ADMINISTRATIVE REVIEW
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Decision Status Message Banner */}
+            {decisionMsg && (
+              <div
+                style={{
+                  padding: "12px 16px",
+                  borderRadius: "8px",
+                  fontSize: "13px",
+                  fontWeight: "750",
+                  marginBottom: "16px",
+                  background: decisionMsg.startsWith("❌") ? "#fef2f2" : "#f0fdf4",
+                  color: decisionMsg.startsWith("❌") ? "#991b1b" : "#166534",
+                  border: `1.5px solid ${decisionMsg.startsWith("❌") ? "#fca5a5" : "#86efac"}`,
+                }}
+              >
+                {decisionMsg}
+              </div>
+            )}
+
+            {/* ACTION BUTTONS DIRECTLY BELOW THE LETTER: ACCEPT & MARK PRESENT or REJECT & MARK ABSENT */}
+            <div
+              style={{
+                background: "#f8fafc",
+                padding: "18px 20px",
+                borderRadius: "12px",
+                border: "1.5px solid #e2e8f0",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.03)",
+              }}
+            >
+              <div style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", marginBottom: "4px" }}>
+                ⚖️ Admin Verification Decision for Attendance Database:
+              </div>
+              <p style={{ margin: "0 0 14px 0", fontSize: "12.5px", color: "#64748b" }}>
+                Clicking an action below immediately writes to the official institutional attendance records for this lecture date & subject, updates the defaulter calculations, and sends an email receipt to <b>{selectedLeaveApp.student_email}</b>.
+              </p>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                {/* 1. ACCEPT & MARK PRESENT */}
+                <button
+                  type="button"
+                  onClick={() => handleLeaveDecision("Approved")}
+                  disabled={decisionLoading}
+                  style={{
+                    background: "linear-gradient(135deg, #10b981, #047857)",
+                    color: "#ffffff",
+                    border: "none",
+                    borderRadius: "10px",
+                    padding: "14px 18px",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    boxShadow: "0 4px 14px rgba(16,185,129,0.35)",
+                    transition: "all 0.2s ease",
+                  }}
+                >
+                  <div style={{ fontSize: "15px", fontWeight: "800", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span>✅</span> Accept & Mark Present
+                  </div>
+                  <div style={{ fontSize: "11.5px", color: "#d1fae5", marginTop: "4px", lineHeight: "1.4" }}>
+                    Marks student as <b>PRESENT</b> for this lecture. Increments attendance % and exempts from defaulter list.
+                  </div>
+                </button>
+
+                {/* 2. REJECT & MARK ABSENT */}
+                <button
+                  type="button"
+                  onClick={() => handleLeaveDecision("Rejected")}
+                  disabled={decisionLoading}
+                  style={{
+                    background: "linear-gradient(135deg, #ef4444, #b91c1c)",
+                    color: "#ffffff",
+                    border: "none",
+                    borderRadius: "10px",
+                    padding: "14px 18px",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    boxShadow: "0 4px 14px rgba(239,68,68,0.35)",
+                    transition: "all 0.2s ease",
+                  }}
+                >
+                  <div style={{ fontSize: "15px", fontWeight: "800", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span>❌</span> Reject & Mark Absent
+                  </div>
+                  <div style={{ fontSize: "11.5px", color: "#fee2e2", marginTop: "4px", lineHeight: "1.4" }}>
+                    Marks student as <b>ABSENT</b> for this lecture. Defaulter list reflects this absence.
+                  </div>
+                </button>
+              </div>
+
+              <div style={{ marginTop: "14px", display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedLeaveApp(null);
+                    setDecisionMsg("");
+                  }}
+                  style={{
+                    padding: "9px 20px",
+                    background: "#ffffff",
+                    color: "#475569",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: "8px",
+                    fontWeight: "750",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Close Inspection Window
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 🔐 ADMIN PASSWORD CHANGE MODAL                                            */}
+      {/* ========================================================================= */}
       {showAdminPassModal && (
         <div
           style={{
