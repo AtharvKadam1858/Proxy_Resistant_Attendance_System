@@ -123,6 +123,123 @@ export async function loginUserWithSupabase(email: string, role: string, passwor
   throw new Error("❌ Invalid role selected.");
 }
 
+export async function validateAccountForPasswordReset(
+  role: string,
+  email: string,
+  verificationKey: string
+): Promise<{ found: boolean; name: string; identifier: string; email: string }> {
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanKey = verificationKey.trim();
+
+  if (!cleanEmail) throw new Error("❌ Registered college email is required.");
+  if (!cleanKey) throw new Error("❌ Security verification ID (PRN / Teacher ID / Admin ID) is required.");
+
+  if (role === "student") {
+    const data = await supabaseQuery(
+      `students?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
+    );
+    if (!data || data.length === 0) {
+      throw new Error(`❌ No student account registered with email: ${cleanEmail}`);
+    }
+    const student = data[0];
+    const keyMatch =
+      student.prn.toLowerCase() === cleanKey.toLowerCase() ||
+      (student.phone && student.phone.trim() === cleanKey);
+    if (!keyMatch) {
+      throw new Error("❌ Security check failed: PRN does not match the registered record for this email.");
+    }
+    return {
+      found: true,
+      name: student.full_name || "Student",
+      identifier: student.prn,
+      email: student.email,
+    };
+  }
+
+  if (role === "teacher") {
+    const data = await supabaseQuery(
+      `teachers?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
+    );
+    if (!data || data.length === 0) {
+      throw new Error(`❌ No faculty account registered with email: ${cleanEmail}`);
+    }
+    const teacher = data[0];
+    const keyMatch =
+      teacher.teacher_id.toLowerCase() === cleanKey.toLowerCase() ||
+      (teacher.phone && teacher.phone.trim() === cleanKey);
+    if (!keyMatch) {
+      throw new Error("❌ Security check failed: Teacher ID does not match faculty records.");
+    }
+    return {
+      found: true,
+      name: teacher.full_name || "Faculty",
+      identifier: teacher.teacher_id,
+      email: teacher.email,
+    };
+  }
+
+  if (role === "admin") {
+    const data = await supabaseQuery(
+      `admins?email=ilike.${encodeURIComponent(cleanEmail)}&limit=1`
+    );
+    if (!data || data.length === 0) {
+      throw new Error(`❌ No administrator account registered with email: ${cleanEmail}`);
+    }
+    const admin = data[0];
+    const keyMatch = admin.admin_id.toLowerCase() === cleanKey.toLowerCase();
+    if (!keyMatch) {
+      throw new Error("❌ Security check failed: Admin ID does not match administrator records.");
+    }
+    return {
+      found: true,
+      name: admin.full_name || "Administrator",
+      identifier: admin.admin_id,
+      email: admin.email,
+    };
+  }
+
+  throw new Error("❌ Invalid role selected.");
+}
+
+export async function commitPasswordResetWithOtp(
+  role: string,
+  identifier: string,
+  newPassword: string
+): Promise<{ success: boolean; message: string }> {
+  const cleanId = identifier.trim();
+  const cleanPass = newPassword.trim();
+
+  if (!cleanPass || cleanPass.length < 6) {
+    throw new Error("❌ New password must be at least 6 characters long.");
+  }
+
+  if (role === "student") {
+    await supabaseQuery(`students?prn=eq.${encodeURIComponent(cleanId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ password_hash: cleanPass }),
+    });
+    return { success: true, message: "Student password updated successfully! You can now log in." };
+  }
+
+  if (role === "teacher") {
+    await supabaseQuery(`teachers?teacher_id=eq.${encodeURIComponent(cleanId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ password_hash: cleanPass }),
+    });
+    return { success: true, message: "Faculty password updated successfully! You can now log in." };
+  }
+
+  if (role === "admin") {
+    await supabaseQuery(`admins?admin_id=eq.${encodeURIComponent(cleanId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ password_hash: cleanPass }),
+    });
+    return { success: true, message: "Administrator password updated successfully! You can now log in." };
+  }
+
+  throw new Error("❌ Invalid user role.");
+}
+
 export async function resetUserPasswordWithVerification(
   role: string,
   email: string,

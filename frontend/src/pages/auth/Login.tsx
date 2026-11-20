@@ -2,7 +2,17 @@ import { useState, useRef, useEffect } from "react";
 import "../../styles/login.css";
 import RITLogo from "../../assets/RIT_logo.jpeg";
 
-import { loginUserWithSupabase, registerStudent, resetUserPasswordWithVerification } from "../../services/supabase";
+import {
+  loginUserWithSupabase,
+  registerStudent,
+  validateAccountForPasswordReset,
+  commitPasswordResetWithOtp,
+} from "../../services/supabase";
+import {
+  sendPasswordResetOtpEmail,
+  playSuccessChime,
+  triggerHapticFeedback,
+} from "../../services/emailService";
 
 export default function Login() {
   const [role, setRole] = useState("student");
@@ -16,28 +26,146 @@ export default function Login() {
     localStorage.clear();
   }, []);
 
-  // 🔑 Forgot / Reset Password State
+  // 🔑 Forgot / Reset Password State with Two-Step Numerical Email OTP Verification
   const [showForgotModal, setShowForgotModal] = useState(false);
+  const [otpStep, setOtpStep] = useState<1 | 2>(1);
   const [forgotRole, setForgotRole] = useState("student");
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotKey, setForgotKey] = useState(""); // PRN for student, Teacher ID, Admin ID
+  const [candidateName, setCandidateName] = useState("");
+  const [verifiedIdentifier, setVerifiedIdentifier] = useState("");
+  const [activeOtp, setActiveOtp] = useState("");
+  const [otpTimestamp, setOtpTimestamp] = useState<number>(0);
+  const [enteredOtp, setEnteredOtp] = useState("");
   const [forgotNewPass, setForgotNewPass] = useState("");
   const [forgotConfirmPass, setForgotConfirmPass] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotMsg, setForgotMsg] = useState("");
+  const [resendTimer, setResendTimer] = useState(0);
+  const [forgotSuccess, setForgotSuccess] = useState(false);
 
-  const handleForgotSubmit = async (e: React.FormEvent) => {
+  // Timer cooldown for OTP resend
+  useEffect(() => {
+    let interval: any = null;
+    if (resendTimer > 0) {
+      interval = setInterval(() => {
+        setResendTimer((prev) => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [resendTimer]);
+
+  // Generate unique strictly numerical 6-digit OTP
+  const generateNumericOtp = (excludeOtp?: string): string => {
+    let code = "";
+    do {
+      code = Math.floor(100000 + Math.random() * 900000).toString();
+    } while (excludeOtp && code === excludeOtp);
+    return code;
+  };
+
+  // Step 1: Validate Account & Dispatch Numerical OTP to Registered Email
+  const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotMsg("");
 
-    if (!forgotEmail || !forgotKey || !forgotNewPass) {
-      setForgotMsg("❌ Please fill in all required fields.");
+    const cleanEmail = forgotEmail.trim();
+    const cleanKey = forgotKey.trim();
+
+    if (!cleanEmail || !cleanKey) {
+      setForgotMsg("❌ Please enter both your registered college email and security verification ID.");
       return;
     }
-    if (forgotNewPass.length < 6) {
-      setForgotMsg("❌ Password must be at least 6 characters long.");
+
+    setForgotLoading(true);
+    try {
+      // 1. Verify that this role, email, and ID exist in Supabase
+      const account = await validateAccountForPasswordReset(forgotRole, cleanEmail, cleanKey);
+      setCandidateName(account.name);
+      setVerifiedIdentifier(account.identifier);
+
+      // 2. Generate unique 6-digit numerical OTP
+      const newOtp = generateNumericOtp(activeOtp);
+      setActiveOtp(newOtp);
+      setOtpTimestamp(Date.now());
+
+      // 3. Dispatch OTP via Email Service
+      await sendPasswordResetOtpEmail({
+        email: account.email,
+        role: forgotRole,
+        candidateName: account.name,
+        identifier: account.identifier,
+        otp: newOtp,
+      });
+
+      // 4. Advance to Step 2
+      setOtpStep(2);
+      setResendTimer(30);
+      setEnteredOtp("");
+      setForgotMsg(`✅ 6-Digit OTP dispatched to ${account.email}. Please check your inbox or spam folder.`);
+    } catch (err: any) {
+      setForgotMsg(err?.message || "❌ Verification failed. Please ensure the email and ID match registered records.");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  // Resend OTP: Generates a new unique 6-digit numerical OTP and dispatches fresh email
+  const handleResendOtp = async () => {
+    if (resendTimer > 0 || forgotLoading) return;
+    setForgotLoading(true);
+    setForgotMsg("");
+    try {
+      const newOtp = generateNumericOtp(activeOtp);
+      setActiveOtp(newOtp);
+      setOtpTimestamp(Date.now());
+
+      await sendPasswordResetOtpEmail({
+        email: forgotEmail.trim(),
+        role: forgotRole,
+        candidateName: candidateName,
+        identifier: verifiedIdentifier || forgotKey.trim(),
+        otp: newOtp,
+      });
+
+      setResendTimer(30);
+      setEnteredOtp("");
+      setForgotMsg(`🔄 Brand new 6-digit numerical OTP sent to ${forgotEmail.trim()}! Check your email.`);
+    } catch (err: any) {
+      setForgotMsg(err?.message || "❌ Failed to resend OTP. Please try again.");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  // Step 2: Verify Entered Numerical OTP & Update Password in Cloud Database
+  const handleVerifyOtpAndResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotMsg("");
+
+    const cleanOtp = enteredOtp.trim();
+    if (!cleanOtp || cleanOtp.length !== 6 || !/^\d{6}$/.test(cleanOtp)) {
+      setForgotMsg("❌ Please enter the exact 6-digit numerical OTP received on your registered email.");
       return;
     }
+
+    // Expiration check (10 minutes)
+    if (Date.now() - otpTimestamp > 10 * 60 * 1000) {
+      setForgotMsg("❌ OTP has expired (valid for 10 minutes). Click '🔄 Resend New OTP' below to generate a new code.");
+      return;
+    }
+
+    // Strict numerical OTP match
+    if (cleanOtp !== activeOtp) {
+      setForgotMsg("❌ Incorrect OTP! The code entered does not match the numerical OTP dispatched to your email.");
+      return;
+    }
+
+    if (!forgotNewPass || forgotNewPass.length < 6) {
+      setForgotMsg("❌ New password must be at least 6 characters long.");
+      return;
+    }
+
     if (forgotNewPass !== forgotConfirmPass) {
       setForgotMsg("❌ Passwords do not match. Please verify.");
       return;
@@ -45,20 +173,30 @@ export default function Login() {
 
     setForgotLoading(true);
     try {
-      const res = await resetUserPasswordWithVerification(
+      const res = await commitPasswordResetWithOtp(
         forgotRole,
-        forgotEmail,
-        forgotKey,
+        verifiedIdentifier || forgotKey.trim(),
         forgotNewPass
       );
-      setForgotMsg(`✅ ${res.message}`);
+      setForgotSuccess(true);
+      setForgotMsg(`🎉 ${res.message}`);
+      playSuccessChime();
+      triggerHapticFeedback();
+
       setTimeout(() => {
-        setEmail(forgotEmail);
+        setEmail(forgotEmail.trim());
         setPassword(forgotNewPass);
         setRole(forgotRole);
         setShowForgotModal(false);
-        setMsg("✅ Password reset successfully! Click Login to enter your portal.");
-      }, 1800);
+        // Reset modal state
+        setOtpStep(1);
+        setEnteredOtp("");
+        setActiveOtp("");
+        setForgotNewPass("");
+        setForgotConfirmPass("");
+        setForgotSuccess(false);
+        setMsg("✅ Password reset successfully! Click Login to enter your portal with your new password.");
+      }, 2000);
     } catch (err: any) {
       setForgotMsg(err?.message || "❌ Failed to reset password.");
     } finally {
@@ -397,10 +535,17 @@ export default function Login() {
             <button
               type="button"
               onClick={() => {
-                setShowForgotModal(true);
+                setOtpStep(1);
                 setForgotRole(role);
                 setForgotEmail(email);
+                setForgotKey("");
+                setEnteredOtp("");
+                setActiveOtp("");
+                setForgotNewPass("");
+                setForgotConfirmPass("");
                 setForgotMsg("");
+                setForgotSuccess(false);
+                setShowForgotModal(true);
               }}
               style={{
                 background: "none",
@@ -760,10 +905,30 @@ export default function Login() {
               alignItems: "center"
             }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: "17px", fontWeight: "750" }}>🔑 Reset Account Password</h3>
-                <p style={{ margin: "2px 0 0 0", fontSize: "12px", opacity: 0.9 }}>
-                  100% Secure Database-Verified Self-Service Recovery
-                </p>
+                <h3 style={{ margin: 0, fontSize: "17px", fontWeight: "750" }}>🔐 Secure Numerical Email OTP Reset</h3>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px" }}>
+                  <span style={{
+                    fontSize: "11px",
+                    fontWeight: "750",
+                    padding: "2px 8px",
+                    borderRadius: "10px",
+                    background: otpStep === 1 ? "#ffca08" : "rgba(255,255,255,0.25)",
+                    color: otpStep === 1 ? "#000000" : "#ffffff"
+                  }}>
+                    1. Account Check
+                  </span>
+                  <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.7)" }}>➔</span>
+                  <span style={{
+                    fontSize: "11px",
+                    fontWeight: "750",
+                    padding: "2px 8px",
+                    borderRadius: "10px",
+                    background: otpStep === 2 ? "#ffca08" : "rgba(255,255,255,0.25)",
+                    color: otpStep === 2 ? "#000000" : "#ffffff"
+                  }}>
+                    2. 6-Digit Email OTP
+                  </span>
+                </div>
               </div>
               <button
                 type="button"
@@ -781,173 +946,362 @@ export default function Login() {
               </button>
             </div>
 
-            <form onSubmit={handleForgotSubmit} style={{ padding: "20px" }}>
-              <div style={{ marginBottom: "14px" }}>
-                <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
-                  Select Account Role *
-                </label>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  {(["student", "teacher", "admin"] as const).map((r) => (
+            {forgotSuccess ? (
+              <div style={{ padding: "34px 24px", textAlign: "center" }}>
+                <div style={{ fontSize: "52px", marginBottom: "14px" }}>🎉</div>
+                <h3 style={{ margin: "0 0 8px 0", color: "#166534", fontSize: "19px", fontWeight: "800" }}>
+                  Password Changed Successfully!
+                </h3>
+                <p style={{ margin: "0 0 16px 0", color: "#4b5563", fontSize: "13px", lineHeight: "1.5" }}>
+                  Your new credentials have been safely committed to the RIT cloud database.
+                </p>
+                <div style={{
+                  display: "inline-block",
+                  padding: "8px 18px",
+                  background: "#f0fdf4",
+                  borderRadius: "20px",
+                  color: "#15803d",
+                  fontSize: "12.5px",
+                  fontWeight: "750",
+                  border: "1px solid #bbf7d0"
+                }}>
+                  ✅ Redirecting to login portal...
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* STEP 1: Account Identification & Numerical OTP Dispatch */}
+                {otpStep === 1 && (
+              <form onSubmit={handleRequestOtp} style={{ padding: "20px" }}>
+                <div style={{
+                  background: "#eff6ff",
+                  border: "1px solid #bfdbfe",
+                  borderRadius: "8px",
+                  padding: "10px 12px",
+                  marginBottom: "14px",
+                  fontSize: "12px",
+                  color: "#1e40af",
+                  lineHeight: "1.45"
+                }}>
+                  🛡️ <strong>Anti-Tamper Security:</strong> To prevent unauthorized password modifications by others, a unique 6-digit numerical OTP will be sent to the candidate's registered college email.
+                </div>
+
+                <div style={{ marginBottom: "14px" }}>
+                  <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
+                    Select Account Role *
+                  </label>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    {(["student", "teacher", "admin"] as const).map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => setForgotRole(r)}
+                        style={{
+                          flex: 1,
+                          padding: "7px 10px",
+                          fontSize: "12px",
+                          fontWeight: "700",
+                          borderRadius: "6px",
+                          border: "1px solid",
+                          borderColor: forgotRole === r ? "#ffca08" : "#d1d5db",
+                          background: forgotRole === r ? "#fffbeb" : "#f9fafb",
+                          color: forgotRole === r ? "#92400e" : "#4b5563",
+                          cursor: "pointer"
+                        }}
+                      >
+                        {r === "student" ? "Student" : r === "teacher" ? "Teacher" : "Admin"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: "12px" }}>
+                  <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
+                    Registered College Email *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="e.g. candidate@ritindia.edu"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "9px 12px",
+                      borderRadius: "7px",
+                      border: "1px solid #d1d5db",
+                      fontSize: "13px",
+                      boxSizing: "border-box"
+                    }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: "16px" }}>
+                  <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
+                    {forgotRole === "student"
+                      ? "Security Verification: Student PRN *"
+                      : forgotRole === "teacher"
+                      ? "Security Verification: Teacher ID *"
+                      : "Security Verification: Admin ID *"}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder={
+                      forgotRole === "student"
+                        ? "Enter your registered PRN"
+                        : forgotRole === "teacher"
+                        ? "Enter Teacher ID (e.g. TCH001)"
+                        : "Enter Admin ID (e.g. ADM001)"
+                    }
+                    value={forgotKey}
+                    onChange={(e) => setForgotKey(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "9px 12px",
+                      borderRadius: "7px",
+                      border: "1px solid #d1d5db",
+                      fontSize: "13px",
+                      boxSizing: "border-box"
+                    }}
+                  />
+                </div>
+
+                {forgotMsg && (
+                  <div style={{
+                    padding: "10px 12px",
+                    borderRadius: "7px",
+                    fontSize: "12.5px",
+                    fontWeight: "600",
+                    marginBottom: "14px",
+                    background: forgotMsg.startsWith("✅") ? "#f0fdf4" : "#fef2f2",
+                    color: forgotMsg.startsWith("✅") ? "#166534" : "#991b1b",
+                    border: `1px solid ${forgotMsg.startsWith("✅") ? "#86efac" : "#fca5a5"}`
+                  }}>
+                    {forgotMsg}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotModal(false)}
+                    style={{
+                      flex: 1,
+                      padding: "10px",
+                      borderRadius: "8px",
+                      border: "1px solid #d1d5db",
+                      background: "#f3f4f6",
+                      color: "#374151",
+                      fontWeight: "700",
+                      fontSize: "13px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={forgotLoading}
+                    style={{
+                      flex: 2,
+                      padding: "10px",
+                      borderRadius: "8px",
+                      border: "none",
+                      background: "#ffca08",
+                      color: "#000000",
+                      fontWeight: "800",
+                      fontSize: "13px",
+                      cursor: forgotLoading ? "not-allowed" : "pointer",
+                      boxShadow: "0 2px 8px rgba(255,202,8,0.3)"
+                    }}
+                  >
+                    {forgotLoading ? "Verifying & Sending OTP..." : "📨 Send 6-Digit OTP to Email"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* STEP 2: Numerical OTP Verification & Password Reset */}
+            {otpStep === 2 && (
+              <form onSubmit={handleVerifyOtpAndResetPassword} style={{ padding: "20px" }}>
+                <div style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #bbf7d0",
+                  borderRadius: "8px",
+                  padding: "10px 12px",
+                  marginBottom: "14px",
+                  fontSize: "12.5px",
+                  color: "#166534"
+                }}>
+                  <div style={{ fontWeight: "750", display: "flex", alignItems: "center", gap: "6px", marginBottom: "3px" }}>
+                    <span>📧</span> OTP Sent to: <span style={{ color: "#0f766e" }}>{forgotEmail}</span>
+                  </div>
+                  <div style={{ fontSize: "11.5px", color: "#374151" }}>
+                    Candidate: <strong>{candidateName}</strong> ({forgotRole.toUpperCase()}: {verifiedIdentifier || forgotKey})
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#dc2626", marginTop: "3px", fontWeight: "600" }}>
+                    ⏱️ Code expires in 10 minutes • Strictly 6 numerical digits
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: "14px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "5px" }}>
+                    <label style={{ fontSize: "12.5px", fontWeight: "750", color: "#1f2937" }}>
+                      Enter 6-Digit Numerical OTP *
+                    </label>
                     <button
-                      key={r}
                       type="button"
-                      onClick={() => setForgotRole(r)}
+                      disabled={resendTimer > 0 || forgotLoading}
+                      onClick={handleResendOtp}
                       style={{
-                        flex: 1,
-                        padding: "7px 10px",
+                        background: "none",
+                        border: "none",
+                        color: resendTimer > 0 ? "#9ca3af" : "#2563eb",
+                        fontWeight: "750",
                         fontSize: "12px",
-                        fontWeight: "700",
-                        borderRadius: "6px",
-                        border: "1px solid",
-                        borderColor: forgotRole === r ? "#ffca08" : "#d1d5db",
-                        background: forgotRole === r ? "#fffbeb" : "#f9fafb",
-                        color: forgotRole === r ? "#92400e" : "#4b5563",
-                        cursor: "pointer"
+                        cursor: resendTimer > 0 ? "not-allowed" : "pointer",
+                        padding: "0 2px",
+                        textDecoration: resendTimer > 0 ? "none" : "underline"
                       }}
                     >
-                      {r === "student" ? "Student" : r === "teacher" ? "Teacher" : "Admin"}
+                      {resendTimer > 0 ? `🔄 Resend in ${resendTimer}s` : "🔄 Resend New OTP"}
                     </button>
-                  ))}
+                  </div>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    required
+                    placeholder="••••••"
+                    value={enteredOtp}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, "");
+                      setEnteredOtp(val);
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      border: "2px solid #3b82f6",
+                      background: "#f8fafc",
+                      fontSize: "24px",
+                      fontWeight: "900",
+                      letterSpacing: "8px",
+                      textAlign: "center",
+                      color: "#1e3a8a",
+                      fontFamily: "monospace",
+                      boxSizing: "border-box"
+                    }}
+                  />
+                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", textAlign: "center" }}>
+                    Check your Inbox and Spam folder for code from RIT Security.
+                  </div>
                 </div>
-              </div>
 
-              <div style={{ marginBottom: "12px" }}>
-                <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
-                  Registered College Email *
-                </label>
-                <input
-                  type="email"
-                  required
-                  placeholder="e.g. yourname@ritindia.edu"
-                  value={forgotEmail}
-                  onChange={(e) => setForgotEmail(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "9px 12px",
-                    borderRadius: "7px",
-                    border: "1px solid #d1d5db",
-                    fontSize: "13px",
-                    boxSizing: "border-box"
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: "12px" }}>
-                <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
-                  {forgotRole === "student" ? "Security Verification: Student PRN *" : forgotRole === "teacher" ? "Security Verification: Teacher ID *" : "Security Verification: Admin ID *"}
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder={forgotRole === "student" ? "Enter your PRN (or registered phone)" : forgotRole === "teacher" ? "Enter Teacher ID (e.g. TCH001)" : "Enter Admin ID (e.g. ADM001)"}
-                  value={forgotKey}
-                  onChange={(e) => setForgotKey(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "9px 12px",
-                    borderRadius: "7px",
-                    border: "1px solid #d1d5db",
-                    fontSize: "13px",
-                    boxSizing: "border-box"
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: "12px" }}>
-                <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
-                  New Password (min 6 characters) *
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Enter new password"
-                  value={forgotNewPass}
-                  onChange={(e) => setForgotNewPass(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "9px 12px",
-                    borderRadius: "7px",
-                    border: "1px solid #d1d5db",
-                    fontSize: "13px",
-                    boxSizing: "border-box"
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: "16px" }}>
-                <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
-                  Confirm New Password *
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Re-enter new password"
-                  value={forgotConfirmPass}
-                  onChange={(e) => setForgotConfirmPass(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "9px 12px",
-                    borderRadius: "7px",
-                    border: "1px solid #d1d5db",
-                    fontSize: "13px",
-                    boxSizing: "border-box"
-                  }}
-                />
-              </div>
-
-              {forgotMsg && (
-                <div style={{
-                  padding: "10px 12px",
-                  borderRadius: "7px",
-                  fontSize: "12.5px",
-                  fontWeight: "600",
-                  marginBottom: "14px",
-                  background: forgotMsg.startsWith("✅") ? "#f0fdf4" : "#fef2f2",
-                  color: forgotMsg.startsWith("✅") ? "#166534" : "#991b1b",
-                  border: `1px solid ${forgotMsg.startsWith("✅") ? "#86efac" : "#fca5a5"}`
-                }}>
-                  {forgotMsg}
+                <div style={{ marginBottom: "12px" }}>
+                  <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
+                    New Password (min 6 characters) *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Enter new password"
+                    value={forgotNewPass}
+                    onChange={(e) => setForgotNewPass(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "9px 12px",
+                      borderRadius: "7px",
+                      border: "1px solid #d1d5db",
+                      fontSize: "13px",
+                      boxSizing: "border-box"
+                    }}
+                  />
                 </div>
-              )}
 
-              <div style={{ display: "flex", gap: "10px" }}>
-                <button
-                  type="button"
-                  onClick={() => setShowForgotModal(false)}
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    borderRadius: "8px",
-                    border: "1px solid #d1d5db",
-                    background: "#f3f4f6",
-                    color: "#374151",
-                    fontWeight: "700",
-                    fontSize: "13px",
-                    cursor: "pointer"
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={forgotLoading}
-                  style={{
-                    flex: 2,
-                    padding: "10px",
-                    borderRadius: "8px",
-                    border: "none",
-                    background: "#ffca08",
-                    color: "#000000",
-                    fontWeight: "800",
-                    fontSize: "13px",
-                    cursor: "pointer",
-                    boxShadow: "0 2px 8px rgba(255,202,8,0.3)"
-                  }}
-                >
-                  {forgotLoading ? "Verifying..." : "Reset & Save Password"}
-                </button>
-              </div>
-            </form>
+                <div style={{ marginBottom: "16px" }}>
+                  <label style={{ display: "block", fontSize: "12.5px", fontWeight: "700", color: "#374151", marginBottom: "5px" }}>
+                    Confirm New Password *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Re-enter new password"
+                    value={forgotConfirmPass}
+                    onChange={(e) => setForgotConfirmPass(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "9px 12px",
+                      borderRadius: "7px",
+                      border: "1px solid #d1d5db",
+                      fontSize: "13px",
+                      boxSizing: "border-box"
+                    }}
+                  />
+                </div>
+
+                {forgotMsg && (
+                  <div style={{
+                    padding: "10px 12px",
+                    borderRadius: "7px",
+                    fontSize: "12.5px",
+                    fontWeight: "600",
+                    marginBottom: "14px",
+                    background: forgotMsg.startsWith("✅") || forgotMsg.startsWith("🎉") ? "#f0fdf4" : "#fef2f2",
+                    color: forgotMsg.startsWith("✅") || forgotMsg.startsWith("🎉") ? "#166534" : "#991b1b",
+                    border: `1px solid ${forgotMsg.startsWith("✅") || forgotMsg.startsWith("🎉") ? "#86efac" : "#fca5a5"}`
+                  }}>
+                    {forgotMsg}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <button
+                    type="button"
+                    disabled={forgotLoading}
+                    onClick={() => {
+                      setOtpStep(1);
+                      setForgotMsg("");
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: "10px",
+                      borderRadius: "8px",
+                      border: "1px solid #d1d5db",
+                      background: "#f3f4f6",
+                      color: "#374151",
+                      fontWeight: "700",
+                      fontSize: "13px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={forgotLoading}
+                    style={{
+                      flex: 2,
+                      padding: "10px",
+                      borderRadius: "8px",
+                      border: "none",
+                      background: "#ffca08",
+                      color: "#000000",
+                      fontWeight: "800",
+                      fontSize: "13px",
+                      cursor: forgotLoading ? "not-allowed" : "pointer",
+                      boxShadow: "0 2px 8px rgba(255,202,8,0.3)"
+                    }}
+                  >
+                    {forgotLoading ? "Verifying..." : "🔒 Verify OTP & Reset"}
+                  </button>
+                </div>
+              </form>
+            )}
+              </>
+            )}
           </div>
         </div>
       )}
